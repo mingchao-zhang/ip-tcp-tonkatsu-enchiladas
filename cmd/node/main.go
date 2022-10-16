@@ -42,7 +42,7 @@ func (node *Node) printInterfaces() {
 	}
 }
 
-func (n *Node) printInterfacesToFile(filename *string) {
+func (n *Node) printInterfacesToFile(filename string) {
 
 }
 
@@ -94,10 +94,6 @@ func recv(udpPort string) {
 	}
 }
 
-// Read from input file to initialize node:
-// -> Read node connection details (ip, port)
-// -> Read all links (source IP, destination IP, destination port)
-// return 0 if no errors
 func initializeNode(filename string, node *Node) int {
 	// parse the input link file and populate the link array
 	file, err := os.Open(filename)
@@ -158,8 +154,22 @@ func handleCli(text string, node *Node) {
 		if len(words) == 1 {
 			node.printInterfaces()
 		} else if len(words) == 2 {
-			fmt.Println("To print to the file")
+			node.printInterfacesToFile(words[1])
 		}
+	} else if words[0] == "routes" || words[0] == "lr" {
+		if len(words) == 1 {
+
+		} else if len(words) == 2 {
+
+		}
+	} else if words[0] == STATEDOWN {
+
+	} else if words[0] == STATEDOWN {
+
+	} else if words[0] == "send" && len(words) == 4 {
+
+	} else {
+		fmt.Println("Unsupported command")
 	}
 }
 
@@ -176,7 +186,7 @@ func main() {
 
 	// set up channels
 	keyboardChan := make(chan string)
-	// listenChan := make(chan byte)
+	// listenChan := make(chan []byte)
 
 	// read input from stdin
 	go func() {
