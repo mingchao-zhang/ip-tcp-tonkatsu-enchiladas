@@ -1,10 +1,7 @@
 *~
 \#*#
-
 *.o
-
+*.lnx
 .vagrant/
-
 .DS_Store
-
 node
