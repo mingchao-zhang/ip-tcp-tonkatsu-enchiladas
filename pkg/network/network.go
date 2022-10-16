@@ -69,7 +69,7 @@ func (ft *FwdTable) HandlePacket(hdr *ipv4.Header, message []byte) {
 	}
 
 	// check checksum
-	if hdr.Checksum != int(header.Checksum(hdrBytes, 0)) {
+	if hdr.Checksum != int(header.IPv4.CalculateChecksum(hdrBytes)) {
 		log.Println("Received packet with invalid checksum 😵")
 		return
 	}
@@ -79,6 +79,14 @@ func (ft *FwdTable) HandlePacket(hdr *ipv4.Header, message []byte) {
 	_, ok := ft.myInterfaces[destIP]
 	if ok {
 		// we are the destination, call the handler for the appropriate application
+		handler, ok := ft.applications[uint8(hdr.Protocol)]
+		if !ok {
+			fmt.Println("Received packet with invalid protocol number")
+			return
+		}
+
+		// call the handler and return
+		handler(message, []interface{}{hdr})
 	} else {
 		// not the destination, forward to next hop
 		// what do we do if we don't know a next hop for this destination???
@@ -87,7 +95,23 @@ func (ft *FwdTable) HandlePacket(hdr *ipv4.Header, message []byte) {
 			log.Println("Don't know how to get to this destination 🤷🏾")
 		}
 		fmt.Println(nextHop)
+
+		hdr.TTL -= 1
+		if hdr.TTL == 0 {
+			return
+		}
+
+		hdrBytes, err = hdr.Marshal()
+		if err != nil {
+			log.Println("Unable to marshal header in HandlePacket 🙀")
+			return
+		}
+
+		// recompute checksum with ttl decremented
+		hdr.Checksum = int(header.IPv4.CalculateChecksum(hdrBytes))
+
 		// we should probably make the node stuff a separate package
-		node.Send()
+		// do the forwarding part
+		tpt.Send()
 	}
 }
