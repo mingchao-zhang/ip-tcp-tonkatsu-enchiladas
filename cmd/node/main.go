@@ -35,15 +35,27 @@ func (n *Node) close() {
 	n.UdpConn.Close()
 }
 
-func (node *Node) printInterfaces() {
-	fmt.Println("id  state    local       remote      port")
+func (node *Node) getInterfacesString() *string {
+	res := "id  state    local       remote      port\n"
 	for _, link := range node.Links {
-		fmt.Printf("%d    %s      %s    %s   %s", link.Id, link.State, link.SourceIP, link.DestinationIP, link.DestUdpPort)
+		res += fmt.Sprintf("%d    %s      %s    %s   %s\n", link.Id, link.State, link.SourceIP, link.DestinationIP, link.DestUdpPort)
 	}
+	return &res
 }
 
-func (n *Node) printInterfacesToFile(filename string) {
+func (node *Node) printInterfaces() {
+	str := node.getInterfacesString()
+	fmt.Print(*str)
+}
 
+func (node *Node) printInterfacesToFile(filename string) {
+	file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0755)
+	if err != nil {
+		log.Fatalln("Error opening the file: ", err)
+	}
+	str := node.getInterfacesString()
+	file.Write([]byte(*str))
+	file.Close()
 }
 
 func (n *Node) HandlePacket(packet []byte) {
