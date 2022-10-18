@@ -3,9 +3,11 @@ package main
 import (
 	"bufio"
 	"fmt"
+	transport "ip/pkg/transport"
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -56,6 +58,15 @@ func (node *Node) printInterfacesToFile(filename string) {
 	str := node.getInterfacesString()
 	file.Write([]byte(*str))
 	file.Close()
+}
+
+func (node *Node) setInterfaceState(id int, state string) {
+	for i := range node.Links {
+		link := &node.Links[i]
+		if link.Id == id {
+			link.State = state
+		}
+	}
 }
 
 func (n *Node) HandlePacket(packet []byte) {
@@ -174,12 +185,15 @@ func handleCli(text string, node *Node) {
 		} else if len(words) == 2 {
 
 		}
-	} else if words[0] == STATEDOWN {
-
-	} else if words[0] == STATEDOWN {
-
-	} else if words[0] == "send" && len(words) == 4 {
-
+	} else if words[0] == STATEUP || words[0] == STATEDOWN {
+		if len(words) == 2 {
+			id, err := strconv.Atoi(words[1])
+			if err != nil {
+				fmt.Printf("Invalid interface id: %s", words[1])
+			} else {
+				node.setInterfaceState(id, words[0])
+			}
+		}
 	} else {
 		fmt.Println("Unsupported command")
 	}
@@ -198,7 +212,7 @@ func main() {
 
 	// set up channels
 	keyboardChan := make(chan string)
-	// listenChan := make(chan []byte)
+	listenChan := make(chan []byte)
 
 	// read input from stdin
 	go func() {
@@ -209,11 +223,15 @@ func main() {
 		}
 	}()
 
+	go transport.Recv(*node.UdpConn, &listenChan)
+
 	// Watch all channels, act on one when something happens
 	for {
 		select {
 		case text := <-keyboardChan:
 			handleCli(text, &node)
+		case packet := <-listenChan:
+			fmt.Println(packet)
 		}
 	}
 
