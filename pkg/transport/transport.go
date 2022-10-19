@@ -6,7 +6,11 @@ import (
 	// "golang.org/x/net/ipv4"
 )
 
-func Recv(conn net.UDPConn, listenChan *chan []byte) {
+type Conn struct {
+	conn *net.UDPConn
+}
+
+func Recv(listenChan *chan []byte) {
 
 }
 

@@ -5,6 +5,8 @@ import (
 	"log"
 	"sync"
 
+	"ip/pkg/transport"
+
 	"github.com/google/netstack/tcpip/header"
 	"golang.org/x/net/ipv4"
 )
@@ -16,6 +18,8 @@ type FwdTable struct {
 	myInterfaces map[string]bool
 	table        map[string]string
 	lock         *sync.RWMutex
+	conn         *transport.Conn
+
 	// uint8 is the protocol number for the application
 	// try sync map
 	applications map[uint8]HandlerFunc
@@ -27,29 +31,49 @@ func (ft *FwdTable) InitFwdTable() {
 	ft.lock = new(sync.RWMutex)
 }
 
-func (ft *FwdTable) AddRecord(ip string, nextHop string) {
+func (ft *FwdTable) AcquireLock() {
 	ft.lock.Lock()
-	defer ft.lock.Unlock()
+}
 
+func (ft *FwdTable) ReleaseLock() {
+	ft.lock.Unlock()
+}
+
+// AddRecordUnsafe adds/updates a record in the forwarding table
+// to make the call safe, remember to use AcquireLock() before calling
+// and remember to use ReleaseLock() after calling
+func (ft *FwdTable) AddRecordUnsafe(ip string, nextHop string) {
 	ft.table[ip] = nextHop
 }
 
-func (ft *FwdTable) RegisterApplication(protocolNum uint8, hf HandlerFunc) {
-	ft.lock.Lock()
-	defer ft.lock.Unlock()
+func (ft *FwdTable) AddRecordSafe(ip string, nextHop string) {
+	ft.AcquireLock()
+	defer ft.ReleaseLock()
 
-	ft.applications[protocolNum] = hf
+	ft.AddRecordUnsafe(ip, nextHop)
 }
 
-func (ft *FwdTable) RemoveRecord(ip string) {
+func (ft *FwdTable) RemoveRecordSafe(ip string) {
 	ft.lock.Lock()
 	defer ft.lock.Unlock()
 
 	delete(ft.table, ip)
 }
 
-func (ft *FwdTable) GetRecord(ip string) (nextHop string) {
-	return ""
+func (ft *FwdTable) RegisterHandler(protocolNum uint8, hf HandlerFunc) {
+	ft.AcquireLock()
+	defer ft.ReleaseLock()
+
+	ft.applications[protocolNum] = hf
+}
+
+func (ft *FwdTable) GetRecord(ip string) (nextHop string, ok bool) {
+	ft.lock.RLock()
+	defer ft.lock.RUnlock()
+
+	nextHop, ok = ft.table[ip]
+
+	return
 }
 
 func (ft *FwdTable) Print() {
@@ -85,7 +109,6 @@ func (ft *FwdTable) HandlePacket(hdr *ipv4.Header, message []byte) {
 			return
 		}
 
-		// call the handler and return
 		handler(message, []interface{}{hdr})
 	} else {
 		// not the destination, forward to next hop
@@ -110,8 +133,16 @@ func (ft *FwdTable) HandlePacket(hdr *ipv4.Header, message []byte) {
 		// recompute checksum with ttl decremented
 		hdr.Checksum = int(header.IPv4.CalculateChecksum(hdrBytes))
 
+		hdrBytes, err = hdr.Marshal()
+		if err != nil {
+			log.Println("Unable to marshal header in HandlePacket 🙀")
+			return
+		}
+
 		// we should probably make the node stuff a separate package
 		// do the forwarding part
-		tpt.Send()
+		fullPacket := append(hdrBytes, message...)
+
+		ft.conn.Send(fullPacket, nextHop)
 	}
 }
