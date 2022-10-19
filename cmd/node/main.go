@@ -9,6 +9,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"golang.org/x/net/ipv4"
 )
 
 const (
@@ -69,52 +71,29 @@ func (node *Node) setInterfaceState(id int, state string) {
 	}
 }
 
-func (n *Node) HandlePacket(packet []byte) {
-	//TODO
-}
+func (n *Node) HandlePacket(buffer []byte) {
 
-func send(packet []byte, udpPort string) {
-	addrString := fmt.Sprintf("%s:%s", UDPADDR, udpPort)
-	remoteAddr, err := net.ResolveUDPAddr("udp4", addrString)
+	hdr, err := ipv4.ParseHeader(buffer)
 	if err != nil {
-		log.Panic("Error resolving udp address: ", err)
-	}
-	conn, err := net.DialUDP("udp4", nil, remoteAddr)
-	if err != nil {
-		log.Panic("Error establishing udp conn: ", err)
-	}
-	bytesWritten, err := conn.Write(packet)
-	if err != nil {
-		log.Panicln("Error writing to socket: ", err)
-	}
-	fmt.Printf("Sent %d bytes to the udp port %s\n", bytesWritten, udpPort)
-	conn.Close()
-}
-
-func recv(udpPort string) {
-	// resolve udp4 address
-	listenString := fmt.Sprintf(":%s", udpPort)
-	listenAddr, err := net.ResolveUDPAddr("udp4", listenString)
-	if err != nil {
-		log.Fatal("Error resolving udp address: ", err)
+		fmt.Println("Error parsing the ip header: ", err)
+		return
 	}
 
-	// create connections
-	conn, err := net.ListenUDP("udp4", listenAddr)
-	if err != nil {
-		log.Fatal("Cannot create the udp connection: ", err)
-	}
+	// fmt.Println(hdr.Len)
+	// checksum := header.Checksum(buffer[:hdr.Len], 0)
+	// fmt.Println(checksum)
+	// checksum ^= 0xffff
+	// fmt.Println(checksum)
+	// if checksum != uint16(hdr.Checksum) {
+	// 	fmt.Println("Correct checksum: ", checksum)
+	// 	fmt.Println("Incorrect checksum: ", hdr.Checksum)
+	// 	return
+	// }
 
-	// read from the udp port
-	for {
-		buffer := make([]byte, MAXMSGSIZE)
-		bytesRead, sourceAddr, err := conn.ReadFromUDP(buffer)
-		if err != nil {
-			log.Panicln("Error reading from the udp port: ", err)
-		}
-		fmt.Printf("Read %d bytes from %s\n", bytesRead, sourceAddr.String())
-		// TODO: return buffer
-	}
+	headerSize := hdr.Len
+	msg := buffer[headerSize:]
+
+	fmt.Printf("Received IP packet. Header:  %v\nMessage:  %s\n", hdr, string(msg))
 }
 
 func initializeNode(filename string, node *Node) int {
@@ -230,8 +209,8 @@ func main() {
 		select {
 		case text := <-keyboardChan:
 			handleCli(text, &node)
-		case packet := <-listenChan:
-			fmt.Println(packet)
+		case buffer := <-listenChan:
+			node.HandlePacket(buffer)
 		}
 	}
 
