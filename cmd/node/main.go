@@ -9,6 +9,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"golang.org/x/net/ipv4"
 )
 
 const (
@@ -69,8 +71,29 @@ func (node *Node) setInterfaceState(id int, state string) {
 	}
 }
 
-func (n *Node) HandlePacket(packet []byte) {
-	//TODO
+func (n *Node) HandlePacket(buffer []byte) {
+
+	hdr, err := ipv4.ParseHeader(buffer)
+	if err != nil {
+		fmt.Println("Error parsing the ip header: ", err)
+		return
+	}
+
+	// fmt.Println(hdr.Len)
+	// checksum := header.Checksum(buffer[:hdr.Len], 0)
+	// fmt.Println(checksum)
+	// checksum ^= 0xffff
+	// fmt.Println(checksum)
+	// if checksum != uint16(hdr.Checksum) {
+	// 	fmt.Println("Correct checksum: ", checksum)
+	// 	fmt.Println("Incorrect checksum: ", hdr.Checksum)
+	// 	return
+	// }
+
+	headerSize := hdr.Len
+	msg := buffer[headerSize:]
+
+	fmt.Printf("Received IP packet. Header:  %v\nMessage:  %s\n", hdr, string(msg))
 }
 
 func initializeNode(filename string, node *Node) int {
@@ -186,8 +209,8 @@ func main() {
 		select {
 		case text := <-keyboardChan:
 			handleCli(text, &node)
-		case packet := <-listenChan:
-			fmt.Println(len(packet))
+		case buffer := <-listenChan:
+			node.HandlePacket(buffer)
 		}
 	}
 
