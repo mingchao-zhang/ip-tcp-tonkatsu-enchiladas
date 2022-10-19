@@ -9,11 +9,15 @@ const (
 	MAXMSGSIZE = 1400
 )
 
-func Recv(conn net.UDPConn, listenChan *chan []byte) {
+type Transport struct {
+	Conn *net.UDPConn
+}
+
+func (t *Transport) Recv(listenChan *chan []byte) {
 	for {
 		buffer := make([]byte, MAXMSGSIZE)
 
-		_, _, err := conn.ReadFromUDP(buffer)
+		_, _, err := t.Conn.ReadFromUDP(buffer)
 		if err != nil {
 			log.Panicln("Error reading from the UPD socket: ", err)
 		}
@@ -21,6 +25,6 @@ func Recv(conn net.UDPConn, listenChan *chan []byte) {
 	}
 }
 
-func Send(conn net.UDPConn, remoteAddr string, msg []byte) {
+func (t *Transport) Send(remoteAddr string, msg []byte) {
 
 }
