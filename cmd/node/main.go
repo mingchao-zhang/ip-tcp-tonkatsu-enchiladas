@@ -73,50 +73,6 @@ func (n *Node) HandlePacket(packet []byte) {
 	//TODO
 }
 
-func send(packet []byte, udpPort string) {
-	addrString := fmt.Sprintf("%s:%s", UDPADDR, udpPort)
-	remoteAddr, err := net.ResolveUDPAddr("udp4", addrString)
-	if err != nil {
-		log.Panic("Error resolving udp address: ", err)
-	}
-	conn, err := net.DialUDP("udp4", nil, remoteAddr)
-	if err != nil {
-		log.Panic("Error establishing udp conn: ", err)
-	}
-	bytesWritten, err := conn.Write(packet)
-	if err != nil {
-		log.Panicln("Error writing to socket: ", err)
-	}
-	fmt.Printf("Sent %d bytes to the udp port %s\n", bytesWritten, udpPort)
-	conn.Close()
-}
-
-func recv(udpPort string) {
-	// resolve udp4 address
-	listenString := fmt.Sprintf(":%s", udpPort)
-	listenAddr, err := net.ResolveUDPAddr("udp4", listenString)
-	if err != nil {
-		log.Fatal("Error resolving udp address: ", err)
-	}
-
-	// create connections
-	conn, err := net.ListenUDP("udp4", listenAddr)
-	if err != nil {
-		log.Fatal("Cannot create the udp connection: ", err)
-	}
-
-	// read from the udp port
-	for {
-		buffer := make([]byte, MAXMSGSIZE)
-		bytesRead, sourceAddr, err := conn.ReadFromUDP(buffer)
-		if err != nil {
-			log.Panicln("Error reading from the udp port: ", err)
-		}
-		fmt.Printf("Read %d bytes from %s\n", bytesRead, sourceAddr.String())
-		// TODO: return buffer
-	}
-}
-
 func initializeNode(filename string, node *Node) int {
 	// parse the input link file and populate the link array
 	file, err := os.Open(filename)
@@ -231,7 +187,7 @@ func main() {
 		case text := <-keyboardChan:
 			handleCli(text, &node)
 		case packet := <-listenChan:
-			fmt.Println(packet)
+			fmt.Println(len(packet))
 		}
 	}
 
