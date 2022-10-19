@@ -21,9 +21,9 @@ const (
 )
 
 type Node struct {
-	Name    string
-	Links   []Link
-	UdpConn *net.UDPConn
+	Name      string
+	Links     []Link
+	transport *transport.Transport
 	// AddrPortMap   map[string]string
 }
 
@@ -36,7 +36,7 @@ type Link struct {
 }
 
 func (n *Node) close() {
-	n.UdpConn.Close()
+	n.transport.Conn.Close()
 }
 
 func (node *Node) getInterfacesString() *string {
@@ -119,7 +119,7 @@ func initializeNode(filename string, node *Node) int {
 		log.Fatal("Error resolving udp address: ", err)
 	}
 	// create connections
-	node.UdpConn, err = net.ListenUDP("udp4", listenAddr)
+	node.transport.Conn, err = net.ListenUDP("udp4", listenAddr)
 	if err != nil {
 		log.Fatal("Cannot create the udp connection: ", err)
 	}
@@ -202,7 +202,7 @@ func main() {
 		}
 	}()
 
-	go transport.Recv(*node.UdpConn, &listenChan)
+	go node.transport.Recv(&listenChan)
 
 	// Watch all channels, act on one when something happens
 	for {

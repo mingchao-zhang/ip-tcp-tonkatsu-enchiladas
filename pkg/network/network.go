@@ -18,7 +18,7 @@ type FwdTable struct {
 	myInterfaces map[string]bool
 	table        map[string]string
 	lock         *sync.RWMutex
-	conn         *transport.Conn
+	conn         *transport.Transport
 
 	// uint8 is the protocol number for the application
 	// try sync map
@@ -143,6 +143,6 @@ func (ft *FwdTable) HandlePacket(hdr *ipv4.Header, message []byte) {
 		// do the forwarding part
 		fullPacket := append(hdrBytes, message...)
 
-		ft.conn.Send(fullPacket, nextHop)
+		ft.conn.Send(nextHop, fullPacket)
 	}
 }
