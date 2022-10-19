@@ -3,10 +3,14 @@ package main
 import (
 	"bufio"
 	"fmt"
+	transport "ip/pkg/transport"
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"strings"
+
+	"golang.org/x/net/ipv4"
 )
 
 const (
@@ -35,63 +39,61 @@ func (n *Node) close() {
 	n.UdpConn.Close()
 }
 
-func (node *Node) printInterfaces() {
-	fmt.Println("id  state    local       remote      port")
+func (node *Node) getInterfacesString() *string {
+	res := "id  state    local       remote      port\n"
 	for _, link := range node.Links {
-		fmt.Printf("%d    %s      %s    %s   %s", link.Id, link.State, link.SourceIP, link.DestinationIP, link.DestUdpPort)
+		res += fmt.Sprintf("%d    %s      %s    %s   %s\n", link.Id, link.State, link.SourceIP, link.DestinationIP, link.DestUdpPort)
 	}
+	return &res
 }
 
-func (n *Node) printInterfacesToFile(filename string) {
-
+func (node *Node) printInterfaces() {
+	str := node.getInterfacesString()
+	fmt.Print(*str)
 }
 
-func (n *Node) HandlePacket(packet []byte) {
-	//TODO
+func (node *Node) printInterfacesToFile(filename string) {
+	file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0755)
+	if err != nil {
+		log.Fatalln("Error opening the file: ", err)
+	}
+	str := node.getInterfacesString()
+	file.Write([]byte(*str))
+	file.Close()
 }
 
-func send(packet []byte, udpPort string) {
-	addrString := fmt.Sprintf("%s:%s", UDPADDR, udpPort)
-	remoteAddr, err := net.ResolveUDPAddr("udp4", addrString)
-	if err != nil {
-		log.Panic("Error resolving udp address: ", err)
-	}
-	conn, err := net.DialUDP("udp4", nil, remoteAddr)
-	if err != nil {
-		log.Panic("Error establishing udp conn: ", err)
-	}
-	bytesWritten, err := conn.Write(packet)
-	if err != nil {
-		log.Panicln("Error writing to socket: ", err)
-	}
-	fmt.Printf("Sent %d bytes to the udp port %s\n", bytesWritten, udpPort)
-	conn.Close()
-}
-
-func recv(udpPort string) {
-	// resolve udp4 address
-	listenString := fmt.Sprintf(":%s", udpPort)
-	listenAddr, err := net.ResolveUDPAddr("udp4", listenString)
-	if err != nil {
-		log.Fatal("Error resolving udp address: ", err)
-	}
-
-	// create connections
-	conn, err := net.ListenUDP("udp4", listenAddr)
-	if err != nil {
-		log.Fatal("Cannot create the udp connection: ", err)
-	}
-
-	// read from the udp port
-	for {
-		buffer := make([]byte, MAXMSGSIZE)
-		bytesRead, sourceAddr, err := conn.ReadFromUDP(buffer)
-		if err != nil {
-			log.Panicln("Error reading from the udp port: ", err)
+func (node *Node) setInterfaceState(id int, state string) {
+	for i := range node.Links {
+		link := &node.Links[i]
+		if link.Id == id {
+			link.State = state
 		}
-		fmt.Printf("Read %d bytes from %s\n", bytesRead, sourceAddr.String())
-		// TODO: return buffer
 	}
+}
+
+func (n *Node) HandlePacket(buffer []byte) {
+
+	hdr, err := ipv4.ParseHeader(buffer)
+	if err != nil {
+		fmt.Println("Error parsing the ip header: ", err)
+		return
+	}
+
+	// fmt.Println(hdr.Len)
+	// checksum := header.Checksum(buffer[:hdr.Len], 0)
+	// fmt.Println(checksum)
+	// checksum ^= 0xffff
+	// fmt.Println(checksum)
+	// if checksum != uint16(hdr.Checksum) {
+	// 	fmt.Println("Correct checksum: ", checksum)
+	// 	fmt.Println("Incorrect checksum: ", hdr.Checksum)
+	// 	return
+	// }
+
+	headerSize := hdr.Len
+	msg := buffer[headerSize:]
+
+	fmt.Printf("Received IP packet. Header:  %v\nMessage:  %s\n", hdr, string(msg))
 }
 
 func initializeNode(filename string, node *Node) int {
@@ -162,12 +164,15 @@ func handleCli(text string, node *Node) {
 		} else if len(words) == 2 {
 
 		}
-	} else if words[0] == STATEDOWN {
-
-	} else if words[0] == STATEDOWN {
-
-	} else if words[0] == "send" && len(words) == 4 {
-
+	} else if words[0] == STATEUP || words[0] == STATEDOWN {
+		if len(words) == 2 {
+			id, err := strconv.Atoi(words[1])
+			if err != nil {
+				fmt.Printf("Invalid interface id: %s", words[1])
+			} else {
+				node.setInterfaceState(id, words[0])
+			}
+		}
 	} else {
 		fmt.Println("Unsupported command")
 	}
@@ -186,7 +191,7 @@ func main() {
 
 	// set up channels
 	keyboardChan := make(chan string)
-	// listenChan := make(chan []byte)
+	listenChan := make(chan []byte)
 
 	// read input from stdin
 	go func() {
@@ -197,11 +202,15 @@ func main() {
 		}
 	}()
 
+	go transport.Recv(*node.UdpConn, &listenChan)
+
 	// Watch all channels, act on one when something happens
 	for {
 		select {
 		case text := <-keyboardChan:
 			handleCli(text, &node)
+		case buffer := <-listenChan:
+			node.HandlePacket(buffer)
 		}
 	}
 
