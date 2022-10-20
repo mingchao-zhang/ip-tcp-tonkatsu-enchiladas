@@ -2,10 +2,9 @@ package network
 
 import (
 	"fmt"
+	"ip/pkg/transport"
 	"log"
 	"sync"
-
-	"ip/pkg/transport"
 
 	"github.com/google/netstack/tcpip/header"
 	"golang.org/x/net/ipv4"
@@ -13,75 +12,74 @@ import (
 
 type HandlerFunc = func([]byte, []interface{})
 
+type Link struct {
+	Id          int
+	State       string
+	DestAddr    string
+	DestUdpPort string
+	InterfaceIP string
+	DestIP      string
+}
+
 type FwdTable struct {
-	// net.IP
+	table        map[string]Link
 	myInterfaces map[string]bool
-	table        map[string]string
-	lock         *sync.RWMutex
-	conn         *transport.Transport
 
 	// uint8 is the protocol number for the application
 	// try sync map
 	applications map[uint8]HandlerFunc
+
+	conn *transport.Transport
+	lock sync.RWMutex
 }
 
-// Takes a list of links
-func (ft *FwdTable) InitFwdTable() {
-	ft.table = make(map[string]string)
-	ft.lock = new(sync.RWMutex)
-}
-
-func (ft *FwdTable) AcquireLock() {
-	ft.lock.Lock()
-}
-
-func (ft *FwdTable) ReleaseLock() {
-	ft.lock.Unlock()
-}
-
-// AddRecordUnsafe adds/updates a record in the forwarding table
-// to make the call safe, remember to use AcquireLock() before calling
-// and remember to use ReleaseLock() after calling
-func (ft *FwdTable) AddRecordUnsafe(ip string, nextHop string) {
-	ft.table[ip] = nextHop
-}
-
-func (ft *FwdTable) AddRecordSafe(ip string, nextHop string) {
-	ft.AcquireLock()
-	defer ft.ReleaseLock()
-
-	ft.AddRecordUnsafe(ip, nextHop)
-}
-
-func (ft *FwdTable) RemoveRecordSafe(ip string) {
+func (ft *FwdTable) Init(links []Link) {
 	ft.lock.Lock()
 	defer ft.lock.Unlock()
 
-	delete(ft.table, ip)
+	ft.table = make(map[string]Link)
+	ft.myInterfaces = make(map[string]bool)
+	for _, link := range links {
+		ft.table[link.DestIP] = link
+		ft.myInterfaces[link.InterfaceIP] = true
+	}
 }
 
-func (ft *FwdTable) RegisterHandler(protocolNum uint8, hf HandlerFunc) {
-	ft.AcquireLock()
-	defer ft.ReleaseLock()
+// Add a (DestIP, link) to the ft.table field
+func (ft *FwdTable) AddRecord(destIP string, link *Link) {
+	ft.lock.Lock()
+	defer ft.lock.Unlock()
 
-	ft.applications[protocolNum] = hf
+	ft.table[destIP] = *link
 }
 
-func (ft *FwdTable) GetRecord(ip string) (nextHop string, ok bool) {
+func (ft *FwdTable) RemoveRecord(destIP string) {
+	ft.lock.Lock()
+	defer ft.lock.Unlock()
+
+	delete(ft.table, destIP)
+}
+func (ft *FwdTable) GetRecord(destIP string) (link *Link, ok bool) {
 	ft.lock.RLock()
 	defer ft.lock.RUnlock()
 
-	nextHop, ok = ft.table[ip]
+	nextHop, ok := ft.table[destIP]
+	return &nextHop, ok
+}
 
-	return
+func (ft *FwdTable) RegisterHandler(protocolNum uint8, hf HandlerFunc) {
+	ft.lock.Lock()
+	defer ft.lock.Unlock()
+
+	ft.applications[protocolNum] = hf
 }
 
 func (ft *FwdTable) Print() {
 	ft.lock.RLock()
 	defer ft.lock.RUnlock()
 
-	for k, v := range ft.table {
-		fmt.Printf("key[%s] value[%s]\n", k, v)
+	for destIP, link := range ft.table {
+		fmt.Printf("Dest IP: [%s] Interface IP: [%s]\n", destIP, link.InterfaceIP)
 	}
 }
 
@@ -143,6 +141,6 @@ func (ft *FwdTable) HandlePacket(hdr *ipv4.Header, message []byte) {
 		// do the forwarding part
 		fullPacket := append(hdrBytes, message...)
 
-		ft.conn.Send(nextHop, fullPacket)
+		ft.conn.Send("", fullPacket)
 	}
 }

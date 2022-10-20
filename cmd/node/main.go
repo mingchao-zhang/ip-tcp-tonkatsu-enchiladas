@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	network "ip/pkg/network"
 	transport "ip/pkg/transport"
 	"log"
 	"net"
@@ -10,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/google/netstack/tcpip/header"
 	"golang.org/x/net/ipv4"
 )
 
@@ -22,27 +24,19 @@ const (
 
 type Node struct {
 	Name      string
-	Links     []Link
-	transport *transport.Transport
-	// AddrPortMap   map[string]string
+	Links     []network.Link
+	Transport transport.Transport
+	FwdTable  network.FwdTable
 }
 
-type Link struct {
-	DestUdpPort   string
-	SourceIP      string
-	DestinationIP string
-	State         string
-	Id            int
-}
-
-func (n *Node) close() {
-	n.transport.Conn.Close()
+func (node *Node) close() {
+	node.Transport.Conn.Close()
 }
 
 func (node *Node) getInterfacesString() *string {
 	res := "id  state    local       remote      port\n"
 	for _, link := range node.Links {
-		res += fmt.Sprintf("%d    %s      %s    %s   %s\n", link.Id, link.State, link.SourceIP, link.DestinationIP, link.DestUdpPort)
+		res += fmt.Sprintf("%d    %s      %s    %s   %s\n", link.Id, link.State, link.InterfaceIP, link.DestIP, link.DestUdpPort)
 	}
 	return &res
 }
@@ -79,16 +73,21 @@ func (n *Node) HandlePacket(buffer []byte) {
 		return
 	}
 
-	// fmt.Println(hdr.Len)
-	// checksum := header.Checksum(buffer[:hdr.Len], 0)
-	// fmt.Println(checksum)
-	// checksum ^= 0xffff
-	// fmt.Println(checksum)
-	// if checksum != uint16(hdr.Checksum) {
-	// 	fmt.Println("Correct checksum: ", checksum)
-	// 	fmt.Println("Incorrect checksum: ", hdr.Checksum)
-	// 	return
-	// }
+	fmt.Println(hdr.Len)
+	oldChecksum := hdr.Checksum
+	//hdr.Checksum = 0
+	tempBuffer := make([]byte, hdr.Len)
+	copy(tempBuffer, buffer[:hdr.Len])
+	fmt.Printf("Buffer %d: %v\n", len(tempBuffer), tempBuffer)
+	checksum := header.Checksum(tempBuffer, 0)
+	fmt.Println(checksum)
+	checksum ^= 0xffff
+	fmt.Println(checksum)
+	if checksum != uint16(oldChecksum) {
+		fmt.Println("Correct checksum: ", checksum)
+		fmt.Println("Incorrect checksum: ", oldChecksum)
+		return
+	}
 
 	headerSize := hdr.Len
 	msg := buffer[headerSize:]
@@ -119,7 +118,8 @@ func initializeNode(filename string, node *Node) int {
 		log.Fatal("Error resolving udp address: ", err)
 	}
 	// create connections
-	node.transport.Conn, err = net.ListenUDP("udp4", listenAddr)
+	node.Transport = transport.Transport{}
+	node.Transport.Conn, err = net.ListenUDP("udp4", listenAddr)
 	if err != nil {
 		log.Fatal("Cannot create the udp connection: ", err)
 	}
@@ -128,12 +128,13 @@ func initializeNode(filename string, node *Node) int {
 	linkId := 0
 	for scanner.Scan() {
 		words = strings.Fields(scanner.Text())
-		link := Link{
-			DestUdpPort:   words[1],
-			SourceIP:      words[2],
-			DestinationIP: words[3],
-			State:         STATEUP,
-			Id:            linkId}
+		link := network.Link{
+			Id:          linkId,
+			State:       STATEUP,
+			DestAddr:    words[0],
+			DestUdpPort: words[1],
+			InterfaceIP: words[2],
+			DestIP:      words[3]}
 		node.Links = append(node.Links, link)
 		linkId += 1
 	}
@@ -142,6 +143,9 @@ func initializeNode(filename string, node *Node) int {
 		log.Fatal(err)
 		return 1
 	}
+
+	// initialize FwdTable
+	node.FwdTable.Init(node.Links)
 	return 0
 }
 
@@ -202,7 +206,7 @@ func main() {
 		}
 	}()
 
-	go node.transport.Recv(&listenChan)
+	go node.Transport.Recv(&listenChan)
 
 	// Watch all channels, act on one when something happens
 	for {
@@ -210,7 +214,7 @@ func main() {
 		case text := <-keyboardChan:
 			handleCli(text, &node)
 		case buffer := <-listenChan:
-			node.HandlePacket(buffer)
+			go node.HandlePacket(buffer)
 		}
 	}
 
