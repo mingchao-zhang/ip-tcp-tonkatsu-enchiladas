@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"ip/pkg/transport"
 	"log"
+	"net"
 	"sync"
 
 	"github.com/google/netstack/tcpip/header"
@@ -59,6 +60,7 @@ func (ft *FwdTable) RemoveRecord(destIP string) {
 
 	delete(ft.table, destIP)
 }
+
 func (ft *FwdTable) GetRecord(destIP string) (link *Link, ok bool) {
 	ft.lock.RLock()
 	defer ft.lock.RUnlock()
@@ -83,23 +85,74 @@ func (ft *FwdTable) Print() {
 	}
 }
 
-func (ft *FwdTable) HandlePacket(hdr *ipv4.Header, message []byte) {
-	hdrBytes, err := hdr.Marshal()
+func ComputeChecksum(b []byte) uint16 {
+	checksum := header.Checksum(b, 0)
+	checksumInv := checksum ^ 0xffff
+	return checksumInv
+}
+
+func (ft *FwdTable) SendMsgToDestIP(destIP string, procotol string, msg string) {
+	ft.lock.RLock()
+	link, ok := ft.table[destIP]
+	ft.lock.RUnlock()
+
+	if !ok {
+		fmt.Printf("Can't reach the IP address: %s\n", destIP)
+		return
+	}
+
+	hdr := ipv4.Header{
+		Version:  4,
+		Len:      20, // Header length is always 20 when no IP options
+		TOS:      0,
+		TotalLen: ipv4.HeaderLen + len(msg),
+		ID:       0,
+		Flags:    0,
+		FragOff:  0,
+		TTL:      32,
+		Protocol: 0,
+		Checksum: 0, // Should be 0 until checksum is computed
+		Src:      net.ParseIP(link.InterfaceIP),
+		Dst:      net.ParseIP(destIP),
+		Options:  []byte{},
+	}
+
+	headerBytes, err := hdr.Marshal()
 	if err != nil {
-		log.Println("Unable to marshal header in HandlePacket 🙀")
-		return
+		log.Fatalln("Error marshalling header:  ", err)
 	}
 
-	// check checksum
-	if hdr.Checksum != int(header.IPv4.CalculateChecksum(hdrBytes)) {
-		log.Println("Received packet with invalid checksum 😵")
-		return
+	hdr.Checksum = int(ComputeChecksum(headerBytes))
+	headerBytes, err = hdr.Marshal()
+	if err != nil {
+		log.Fatalln("Error marshalling header:  ", err)
 	}
 
-	// check if destination is one of the interfaces on this node
+	fullPacket := append(headerBytes, []byte(msg)...)
+	ft.HandlePacket(fullPacket)
+}
+
+func (ft *FwdTable) HandlePacket(buffer []byte) {
+	// Verify CheckSum
+	hdr, err := ipv4.ParseHeader(buffer)
+	if err != nil {
+		fmt.Println("Error parsing the ip header: ", err)
+		return
+	}
+	// if hdr.Checksum != int(ComputeChecksum(buffer[:hdr.Len])) {
+	// 	fmt.Printf("Correct library checksum: %d\n", ComputeChecksum(buffer[:hdr.Len]))
+	// 	fmt.Printf("Incorrect header checksum: %d!\n", hdr.Checksum)
+	// 	return
+	// }
+
 	destIP := hdr.Dst.String()
-	_, ok := ft.myInterfaces[destIP]
+	msgBytes := buffer[hdr.Len:]
+	interfaceUp, ok := ft.myInterfaces[destIP]
 	if ok {
+		if !interfaceUp {
+			fmt.Println("Interface has been shut down")
+			return
+		}
 		// we are the destination, call the handler for the appropriate application
 		handler, ok := ft.applications[uint8(hdr.Protocol)]
 		if !ok {
@@ -107,40 +160,37 @@ func (ft *FwdTable) HandlePacket(hdr *ipv4.Header, message []byte) {
 			return
 		}
 
-		handler(message, []interface{}{hdr})
+		handler(msgBytes, []interface{}{hdr})
 	} else {
 		// not the destination, forward to next hop
 		// what do we do if we don't know a next hop for this destination???
-		nextHop, ok := ft.table[destIP]
+		nextHopLink, ok := ft.table[destIP]
 		if !ok {
 			log.Println("Don't know how to get to this destination 🤷🏾")
+			return
 		}
-		fmt.Println(nextHop)
 
 		hdr.TTL -= 1
-		if hdr.TTL == 0 {
+		if hdr.TTL <= 0 {
 			return
 		}
-
-		hdrBytes, err = hdr.Marshal()
+		newHdrBytes, err := hdr.Marshal()
 		if err != nil {
 			log.Println("Unable to marshal header in HandlePacket 🙀")
 			return
 		}
 
-		// recompute checksum with ttl decremented
-		hdr.Checksum = int(header.IPv4.CalculateChecksum(hdrBytes))
-
-		hdrBytes, err = hdr.Marshal()
+		// Recompute checksum with ttl decremented
+		hdr.Checksum = int(ComputeChecksum(newHdrBytes))
+		newHdrBytes, err = hdr.Marshal()
 		if err != nil {
 			log.Println("Unable to marshal header in HandlePacket 🙀")
 			return
 		}
 
-		// we should probably make the node stuff a separate package
-		// do the forwarding part
-		fullPacket := append(hdrBytes, message...)
-
-		ft.conn.Send("", fullPacket)
+		fullPacket := append(newHdrBytes, msgBytes...)
+		remoteString := fmt.Sprintf("%s:%s", nextHopLink.DestAddr, nextHopLink.DestUdpPort)
+		ft.conn.Send(remoteString, fullPacket)
 	}
+
 }

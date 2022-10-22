@@ -10,9 +10,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-
-	"github.com/google/netstack/tcpip/header"
-	"golang.org/x/net/ipv4"
 )
 
 const (
@@ -63,36 +60,6 @@ func (node *Node) setInterfaceState(id int, state string) {
 			link.State = state
 		}
 	}
-}
-
-func (n *Node) HandlePacket(buffer []byte) {
-
-	hdr, err := ipv4.ParseHeader(buffer)
-	if err != nil {
-		fmt.Println("Error parsing the ip header: ", err)
-		return
-	}
-
-	fmt.Println(hdr.Len)
-	oldChecksum := hdr.Checksum
-	//hdr.Checksum = 0
-	tempBuffer := make([]byte, hdr.Len)
-	copy(tempBuffer, buffer[:hdr.Len])
-	fmt.Printf("Buffer %d: %v\n", len(tempBuffer), tempBuffer)
-	checksum := header.Checksum(tempBuffer, 0)
-	fmt.Println(checksum)
-	checksum ^= 0xffff
-	fmt.Println(checksum)
-	if checksum != uint16(oldChecksum) {
-		fmt.Println("Correct checksum: ", checksum)
-		fmt.Println("Incorrect checksum: ", oldChecksum)
-		return
-	}
-
-	headerSize := hdr.Len
-	msg := buffer[headerSize:]
-
-	fmt.Printf("Received IP packet. Header:  %v\nMessage:  %s\n", hdr, string(msg))
 }
 
 func initializeNode(filename string, node *Node) int {
@@ -177,6 +144,10 @@ func handleCli(text string, node *Node) {
 				node.setInterfaceState(id, words[0])
 			}
 		}
+	} else if words[0] == "send" && len(words) >= 4 {
+		msgStartIdx := len("send") + 1 + len(words[1]) + 1 + len(words[2]) + 1
+		msg := text[msgStartIdx:]
+		go node.FwdTable.SendMsgToDestIP(words[1], words[2], msg)
 	} else {
 		fmt.Println("Unsupported command")
 	}
@@ -214,11 +185,7 @@ func main() {
 		case text := <-keyboardChan:
 			handleCli(text, &node)
 		case buffer := <-listenChan:
-			go node.HandlePacket(buffer)
+			go node.FwdTable.HandlePacket(buffer)
 		}
 	}
-
-	// Start listening on our port
-	// -> When we get a packet, call fwdTable to hanlde the packet
-
 }

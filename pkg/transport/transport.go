@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"fmt"
 	"log"
 	"net"
 )
@@ -25,6 +26,15 @@ func (t *Transport) Recv(listenChan *chan []byte) {
 	}
 }
 
-func (t *Transport) Send(remoteAddr string, msg []byte) {
-
+func (t *Transport) Send(remoteString string, msg []byte) {
+	remoteAddr, err := net.ResolveUDPAddr("udp4", remoteString)
+	if err != nil {
+		log.Fatal("Cannot resolve udp address: ", err)
+	}
+	fmt.Println("---", remoteAddr, msg)
+	bytesWritten, err := t.Conn.WriteToUDP(msg, remoteAddr)
+	if err != nil {
+		log.Panicln("Error writing to socket: ", err)
+	}
+	fmt.Printf("%d bytes are written to the address: %s\n", bytesWritten, remoteString)
 }
