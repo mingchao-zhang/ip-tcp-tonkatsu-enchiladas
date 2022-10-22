@@ -30,11 +30,11 @@ type FwdTable struct {
 	// try sync map
 	applications map[uint8]HandlerFunc
 
-	conn *transport.Transport
+	conn transport.Transport
 	lock sync.RWMutex
 }
 
-func (ft *FwdTable) Init(links []Link) {
+func (ft *FwdTable) Init(links []Link, conn transport.Transport) {
 	ft.lock.Lock()
 	defer ft.lock.Unlock()
 
@@ -44,6 +44,7 @@ func (ft *FwdTable) Init(links []Link) {
 		ft.table[link.DestIP] = link
 		ft.myInterfaces[link.InterfaceIP] = true
 	}
+	ft.conn = conn
 }
 
 // Add a (DestIP, link) to the ft.table field

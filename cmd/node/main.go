@@ -112,7 +112,7 @@ func initializeNode(filename string, node *Node) int {
 	}
 
 	// initialize FwdTable
-	node.FwdTable.Init(node.Links)
+	node.FwdTable.Init(node.Links, node.Transport)
 	return 0
 }
 

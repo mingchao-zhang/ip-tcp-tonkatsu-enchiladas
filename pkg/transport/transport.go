@@ -31,7 +31,6 @@ func (t *Transport) Send(remoteString string, msg []byte) {
 	if err != nil {
 		log.Fatal("Cannot resolve udp address: ", err)
 	}
-	fmt.Println("---", remoteAddr, msg)
 	bytesWritten, err := t.Conn.WriteToUDP(msg, remoteAddr)
 	if err != nil {
 		log.Panicln("Error writing to socket: ", err)
