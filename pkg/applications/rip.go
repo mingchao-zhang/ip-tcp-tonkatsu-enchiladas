@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-	"fmt"
+	"ip/pkg/network"
+	"ip/pkg/transport"
+	"sync"
+	"time"
 )
 
 const (
@@ -12,6 +15,9 @@ const (
 	PacketHeaderSize = 4
 	CommandRequest   = 1
 	CommandResponse  = 2
+	INFINITY         = 16
+	UpdateInterval   = time.Second * 5
+	EntryStaleAfter  = time.Second * 12
 )
 
 type Entry struct {
@@ -21,15 +27,20 @@ type Entry struct {
 }
 
 type Packet struct {
-	command    uint16
-	numEntries uint16
-	entries    []Entry
+	command uint16
+	entries []Entry
 }
 
-type Table struct {
+type Table = []Entry
+
+type ripState struct {
+	table     Table
+	transport transport.Transport
+	fwdtable  network.FwdTable
+	lock      *sync.RWMutex
 }
 
-var table Table
+var state ripState
 var ErrMalformedPacket = errors.New("malformed packet")
 
 func (p *Packet) Marshal() ([]byte, error) {
@@ -65,24 +76,49 @@ func (p *Packet) Marshal() ([]byte, error) {
 	return buff.Bytes(), nil
 }
 
-func UnmarshalPacket(packet []byte) (p *Packet, e error) {
+func SendUpdateToIP(ip string, command uint16) (err error) {
+	packet := Packet{
+		command: command,
+		entries: state.table,
+	}
+	packetBytes, err := packet.Marshal()
+	if err != nil {
+		return
+	}
+	// how do I build up the header here?
+	// also need to find the appropriate interface to
+	// send the data on - basically the next hop for the packet
+	// should be the interface that the packet is to be sent on
+	// need to ask Nick about this
+	state.transport.Send(ip, packetBytes)
+
+	return
+}
+
+func UnmarshalPacket(packet []byte) (*Packet, error) {
 	// are there enough bytes for the header?
 	// are the remaining bytes a multiple of the size of an entry?
 	if len(packet) < PacketHeaderSize || (len(packet)-PacketHeaderSize)%EntrySize != 0 {
 		return nil, ErrMalformedPacket
 	}
 
-	p.command = binary.BigEndian.Uint16(packet[:2])
-	p.numEntries = binary.BigEndian.Uint16(packet[2:4])
+	p := Packet{}
 
-	if p.command == 1 && p.numEntries != 0 {
+	p.command = binary.BigEndian.Uint16(packet[:2])
+	if (p.command != CommandRequest) && (p.command != CommandResponse) {
+		return nil, ErrMalformedPacket
+	}
+
+	numEntries := binary.BigEndian.Uint16(packet[2:4])
+
+	if p.command == CommandRequest && numEntries != 0 {
 		return nil, ErrMalformedPacket
 	}
 
 	numEntriesInPacket := (len(packet) - PacketHeaderSize) / 12
 
 	// is the number of entries the same as the entries in the packet?
-	if numEntriesInPacket != int(p.numEntries) {
+	if numEntriesInPacket != int(numEntries) || numEntries > 64 {
 		return nil, ErrMalformedPacket
 	}
 
@@ -94,22 +130,62 @@ func UnmarshalPacket(packet []byte) (p *Packet, e error) {
 		entry := Entry{}
 
 		entry.cost = binary.BigEndian.Uint32(entryBytes[:4])
+		if entry.cost > INFINITY {
+			return nil, ErrMalformedPacket
+		}
 		entry.address = binary.BigEndian.Uint32(entryBytes[4:8])
 		entry.mask = binary.BigEndian.Uint32(entryBytes[8:])
 
 		p.entries = append(p.entries, entry)
 	}
 
-	return
+	return &p, nil
 }
 
-func Handler(data []byte, params []interface{}) {
+func RIPHandler(packet []byte, params []interface{}) {
 	//  handler will take a message and parse it
 
 	// we need to parse data into the
-	fmt.Printf("data: %v\n", data)
+	// fmt.Printf("data: %v\n", data)
+
+	p, err := UnmarshalPacket(packet)
+	if err != nil {
+		// not sure what to do if rip packet was invalid
+	}
+
+	if p.command == CommandResponse {
+		// handle response
+		// basically we go through each entry in the response and then update our table
+		// send out the updated entries to all the neighbours
+	} else {
+		// handle request
+		// we need to get where the request originated from and send an update to that IP
+		ip := "PLACEHOLDER"
+		SendUpdateToIP(ip, CommandResponse)
+	}
+
 }
 
-func Init() {
+func PeriodicUpdate() {
+	// keep a last updated variable, if now - then > 12, expire
+	ticker := time.NewTicker(UpdateInterval)
 
+	for {
+		select {
+		case _ = <-ticker.C:
+			// loop through the list of interfaces and send an updated version of the RIP table to each
+			{
+				ip := "PLACEHOLDER"
+				SendUpdateToIP(ip, CommandResponse)
+			}
+		}
+	}
+}
+
+func RIPInit() {
+	// this will need some way to access the fwd table
+	// some way to access the node's info (like the interfaces and such)
+	// should Init register the handler? I think so
+
+	go PeriodicUpdate()
 }
