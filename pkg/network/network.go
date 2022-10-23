@@ -13,14 +13,24 @@ import (
 
 type HandlerFunc = func([]byte, []interface{})
 
+// TODO: combine DestAddr and DestUdpPort
+// add nextHop
+// add cost
 type Link struct {
 	Id          int
 	State       string
 	DestAddr    string
 	DestUdpPort string
 	InterfaceIP string
-	DestIP      string
+
+	DestIP string
 }
+
+// type Route struct {
+// 	dest string // dest VIP
+// 	next string // next hop VIP
+// 	cost int
+// }
 
 type FwdTable struct {
 	table        map[string]Link
