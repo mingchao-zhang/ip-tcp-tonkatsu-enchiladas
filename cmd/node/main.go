@@ -3,9 +3,12 @@ package main
 import (
 	"bufio"
 	"fmt"
+	network "ip/pkg/network"
+	transport "ip/pkg/transport"
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -17,80 +20,45 @@ const (
 )
 
 type Node struct {
-	Name    string
-	Links   []Link
-	UdpConn *net.UDPConn
-	// AddrPortMap   map[string]string
+	Name      string
+	Links     []network.Link
+	Transport transport.Transport
+	FwdTable  network.FwdTable
 }
 
-type Link struct {
-	DestUdpPort   string
-	SourceIP      string
-	DestinationIP string
-	State         string
-	Id            int
+func (node *Node) close() {
+	node.Transport.Conn.Close()
 }
 
-func (n *Node) close() {
-	n.UdpConn.Close()
+func (node *Node) getInterfacesString() *string {
+	res := "id  state    local       remote      port\n"
+	for _, link := range node.Links {
+		res += fmt.Sprintf("%d    %s      %s    %s   %s\n", link.Id, link.State, link.InterfaceIP, link.DestIP, link.DestUdpPort)
+	}
+	return &res
 }
 
 func (node *Node) printInterfaces() {
-	fmt.Println("id  state    local       remote      port")
-	for _, link := range node.Links {
-		fmt.Printf("%d    %s      %s    %s   %s", link.Id, link.State, link.SourceIP, link.DestinationIP, link.DestUdpPort)
-	}
+	str := node.getInterfacesString()
+	fmt.Print(*str)
 }
 
-func (n *Node) printInterfacesToFile(filename string) {
-
+func (node *Node) printInterfacesToFile(filename string) {
+	file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0755)
+	if err != nil {
+		log.Fatalln("Error opening the file: ", err)
+	}
+	str := node.getInterfacesString()
+	file.Write([]byte(*str))
+	file.Close()
 }
 
-func (n *Node) HandlePacket(packet []byte) {
-	//TODO
-}
-
-func send(packet []byte, udpPort string) {
-	addrString := fmt.Sprintf("%s:%s", UDPADDR, udpPort)
-	remoteAddr, err := net.ResolveUDPAddr("udp4", addrString)
-	if err != nil {
-		log.Panic("Error resolving udp address: ", err)
-	}
-	conn, err := net.DialUDP("udp4", nil, remoteAddr)
-	if err != nil {
-		log.Panic("Error establishing udp conn: ", err)
-	}
-	bytesWritten, err := conn.Write(packet)
-	if err != nil {
-		log.Panicln("Error writing to socket: ", err)
-	}
-	fmt.Printf("Sent %d bytes to the udp port %s\n", bytesWritten, udpPort)
-	conn.Close()
-}
-
-func recv(udpPort string) {
-	// resolve udp4 address
-	listenString := fmt.Sprintf(":%s", udpPort)
-	listenAddr, err := net.ResolveUDPAddr("udp4", listenString)
-	if err != nil {
-		log.Fatal("Error resolving udp address: ", err)
-	}
-
-	// create connections
-	conn, err := net.ListenUDP("udp4", listenAddr)
-	if err != nil {
-		log.Fatal("Cannot create the udp connection: ", err)
-	}
-
-	// read from the udp port
-	for {
-		buffer := make([]byte, MAXMSGSIZE)
-		bytesRead, sourceAddr, err := conn.ReadFromUDP(buffer)
-		if err != nil {
-			log.Panicln("Error reading from the udp port: ", err)
+func (node *Node) setInterfaceState(id int, state string) {
+	for i := range node.Links {
+		link := &node.Links[i]
+		if link.Id == id {
+			link.State = state
 		}
-		fmt.Printf("Read %d bytes from %s\n", bytesRead, sourceAddr.String())
-		// TODO: return buffer
 	}
 }
 
@@ -117,7 +85,8 @@ func initializeNode(filename string, node *Node) int {
 		log.Fatal("Error resolving udp address: ", err)
 	}
 	// create connections
-	node.UdpConn, err = net.ListenUDP("udp4", listenAddr)
+	node.Transport = transport.Transport{}
+	node.Transport.Conn, err = net.ListenUDP("udp4", listenAddr)
 	if err != nil {
 		log.Fatal("Cannot create the udp connection: ", err)
 	}
@@ -126,12 +95,13 @@ func initializeNode(filename string, node *Node) int {
 	linkId := 0
 	for scanner.Scan() {
 		words = strings.Fields(scanner.Text())
-		link := Link{
-			DestUdpPort:   words[1],
-			SourceIP:      words[2],
-			DestinationIP: words[3],
-			State:         STATEUP,
-			Id:            linkId}
+		link := network.Link{
+			Id:          linkId,
+			State:       STATEUP,
+			DestAddr:    words[0],
+			DestUdpPort: words[1],
+			InterfaceIP: words[2],
+			DestIP:      words[3]}
 		node.Links = append(node.Links, link)
 		linkId += 1
 	}
@@ -140,6 +110,9 @@ func initializeNode(filename string, node *Node) int {
 		log.Fatal(err)
 		return 1
 	}
+
+	// initialize FwdTable
+	node.FwdTable.Init(node.Links, node.Transport)
 	return 0
 }
 
@@ -162,12 +135,19 @@ func handleCli(text string, node *Node) {
 		} else if len(words) == 2 {
 
 		}
-	} else if words[0] == STATEDOWN {
-
-	} else if words[0] == STATEDOWN {
-
-	} else if words[0] == "send" && len(words) == 4 {
-
+	} else if words[0] == STATEUP || words[0] == STATEDOWN {
+		if len(words) == 2 {
+			id, err := strconv.Atoi(words[1])
+			if err != nil {
+				fmt.Printf("Invalid interface id: %s", words[1])
+			} else {
+				node.setInterfaceState(id, words[0])
+			}
+		}
+	} else if words[0] == "send" && len(words) >= 4 {
+		msgStartIdx := len("send") + 1 + len(words[1]) + 1 + len(words[2]) + 1
+		msg := text[msgStartIdx:]
+		go node.FwdTable.SendMsgToDestIP(words[1], words[2], msg)
 	} else {
 		fmt.Println("Unsupported command")
 	}
@@ -186,7 +166,7 @@ func main() {
 
 	// set up channels
 	keyboardChan := make(chan string)
-	// listenChan := make(chan []byte)
+	listenChan := make(chan []byte)
 
 	// read input from stdin
 	go func() {
@@ -197,15 +177,15 @@ func main() {
 		}
 	}()
 
+	go node.Transport.Recv(&listenChan)
+
 	// Watch all channels, act on one when something happens
 	for {
 		select {
 		case text := <-keyboardChan:
 			handleCli(text, &node)
+		case buffer := <-listenChan:
+			go node.FwdTable.HandlePacket(buffer)
 		}
 	}
-
-	// Start listening on our port
-	// -> When we get a packet, call fwdTable to hanlde the packet
-
 }
