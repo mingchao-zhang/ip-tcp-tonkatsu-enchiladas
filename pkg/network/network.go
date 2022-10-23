@@ -2,6 +2,7 @@ package network
 
 import (
 	"fmt"
+	link "ip/pkg/ipinterface"
 	"ip/pkg/transport"
 	"log"
 	"net"
@@ -13,71 +14,80 @@ import (
 
 type HandlerFunc = func([]byte, []interface{})
 
-// TODO: combine DestAddr and DestUdpPort
-// add nextHop
-// add cost
-type Link struct {
-	Id          int
-	State       string
-	DestAddr    string
-	DestUdpPort string
-	InterfaceIP string
-
-	DestIP string
+// -----------------------------------------------------------------------------
+// Route
+type Route struct {
+	Dest string // dest VIP
+	Next string // next hop VIP
+	Cost int
 }
 
-// type Route struct {
-// 	dest string // dest VIP
-// 	next string // next hop VIP
-// 	cost int
-// }
-
+// -----------------------------------------------------------------------------
+// FwdTable
 type FwdTable struct {
-	table        map[string]Link
-	myInterfaces map[string]bool
-
-	// uint8 is the protocol number for the application
-	// try sync map
+	IpInterfaces map[string]link.IpInterface
 	applications map[uint8]HandlerFunc
 
 	conn transport.Transport
 	lock sync.RWMutex
 }
 
-func (ft *FwdTable) Init(links []Link, conn transport.Transport) {
+// Request Route Info
+func (ft *FwdTable) Init(links []link.IpInterface, conn transport.Transport) {
 	ft.lock.Lock()
 	defer ft.lock.Unlock()
 
-	ft.table = make(map[string]Link)
-	ft.myInterfaces = make(map[string]bool)
+	ft.IpInterfaces = make(map[string]link.IpInterface)
 	for _, link := range links {
-		ft.table[link.DestIP] = link
-		ft.myInterfaces[link.InterfaceIP] = true
+		ft.IpInterfaces[link.DestIp] = link
 	}
 	ft.conn = conn
 }
 
-// Add a (DestIP, link) to the ft.table field
-func (ft *FwdTable) AddRecord(destIP string, link *Link) {
+func (ft *FwdTable) hasInterface(ip string) bool {
+	ft.lock.RLock()
+	defer ft.lock.RUnlock()
+	for _, inter := range ft.IpInterfaces {
+		if inter.Ip == ip && inter.State == link.INTERFACEUP {
+			return true
+		}
+	}
+	return false
+}
+
+func (ft *FwdTable) AddIpInterface(destIP string, inter *link.IpInterface) {
 	ft.lock.Lock()
 	defer ft.lock.Unlock()
 
-	ft.table[destIP] = *link
+	ft.IpInterfaces[destIP] = *inter
 }
 
-func (ft *FwdTable) RemoveRecord(destIP string) {
+func (ft *FwdTable) RemoveIpInterface(destIP string) {
 	ft.lock.Lock()
 	defer ft.lock.Unlock()
 
-	delete(ft.table, destIP)
+	delete(ft.IpInterfaces, destIP)
 }
 
-func (ft *FwdTable) GetRecord(destIP string) (link *Link, ok bool) {
+func (ft *FwdTable) GetIpInterface(destIP string) (*link.IpInterface, bool) {
 	ft.lock.RLock()
 	defer ft.lock.RUnlock()
 
-	nextHop, ok := ft.table[destIP]
-	return &nextHop, ok
+	inter, ok := ft.IpInterfaces[destIP]
+	return &inter, ok
+}
+
+// Need to modify Route as well later
+func (ft *FwdTable) SetInterfaceState(id int, state string) {
+	ft.lock.Lock()
+	defer ft.lock.Unlock()
+
+	for k, link := range ft.IpInterfaces {
+		if link.Id == id {
+			link.State = state
+			ft.IpInterfaces[k] = link
+		}
+	}
 }
 
 func (ft *FwdTable) RegisterHandler(protocolNum uint8, hf HandlerFunc) {
@@ -87,15 +97,7 @@ func (ft *FwdTable) RegisterHandler(protocolNum uint8, hf HandlerFunc) {
 	ft.applications[protocolNum] = hf
 }
 
-func (ft *FwdTable) Print() {
-	ft.lock.RLock()
-	defer ft.lock.RUnlock()
-
-	for destIP, link := range ft.table {
-		fmt.Printf("Dest IP: [%s] Interface IP: [%s]\n", destIP, link.InterfaceIP)
-	}
-}
-
+// TODO
 func ComputeChecksum(b []byte) uint16 {
 	checksum := header.Checksum(b, 0)
 	checksumInv := checksum ^ 0xffff
@@ -104,7 +106,7 @@ func ComputeChecksum(b []byte) uint16 {
 
 func (ft *FwdTable) SendMsgToDestIP(destIP string, procotol string, msg string) {
 	ft.lock.RLock()
-	link, ok := ft.table[destIP]
+	ipInterface, ok := ft.IpInterfaces[destIP]
 	ft.lock.RUnlock()
 
 	if !ok {
@@ -123,7 +125,7 @@ func (ft *FwdTable) SendMsgToDestIP(destIP string, procotol string, msg string) 
 		TTL:      32,
 		Protocol: 0,
 		Checksum: 0, // Should be 0 until checksum is computed
-		Src:      net.ParseIP(link.InterfaceIP),
+		Src:      net.ParseIP(ipInterface.Ip),
 		Dst:      net.ParseIP(destIP),
 		Options:  []byte{},
 	}
@@ -158,13 +160,9 @@ func (ft *FwdTable) HandlePacket(buffer []byte) {
 
 	destIP := hdr.Dst.String()
 	msgBytes := buffer[hdr.Len:]
-	interfaceUp, ok := ft.myInterfaces[destIP]
-	if ok {
-		if !interfaceUp {
-			fmt.Println("Interface has been shut down")
-			return
-		}
+	if ft.hasInterface(destIP) {
 		// we are the destination, call the handler for the appropriate application
+		fmt.Println(string(msgBytes))
 		handler, ok := ft.applications[uint8(hdr.Protocol)]
 		if !ok {
 			fmt.Println("Received packet with invalid protocol number")
@@ -175,7 +173,7 @@ func (ft *FwdTable) HandlePacket(buffer []byte) {
 	} else {
 		// not the destination, forward to next hop
 		// what do we do if we don't know a next hop for this destination???
-		nextHopLink, ok := ft.table[destIP]
+		nextHopLink, ok := ft.IpInterfaces[destIP]
 		if !ok {
 			log.Println("Don't know how to get to this destination 🤷🏾")
 			return

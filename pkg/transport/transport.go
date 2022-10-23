@@ -11,14 +11,32 @@ const (
 )
 
 type Transport struct {
-	Conn *net.UDPConn
+	conn *net.UDPConn
+}
+
+func (t *Transport) Init(udpPort string) {
+	// resolve udp4 address
+	listenString := fmt.Sprintf(":%s", udpPort)
+	listenAddr, err := net.ResolveUDPAddr("udp4", listenString)
+	if err != nil {
+		log.Fatal("Error resolving udp address: ", err)
+	}
+	// create connections
+	t.conn, err = net.ListenUDP("udp4", listenAddr)
+	if err != nil {
+		log.Fatal("Cannot create the udp connection: ", err)
+	}
+}
+
+func (t *Transport) Close() {
+	t.conn.Close()
 }
 
 func (t *Transport) Recv(listenChan *chan []byte) {
 	for {
 		buffer := make([]byte, MAXMSGSIZE)
 
-		_, _, err := t.Conn.ReadFromUDP(buffer)
+		_, _, err := t.conn.ReadFromUDP(buffer)
 		if err != nil {
 			log.Panicln("Error reading from the UPD socket: ", err)
 		}
@@ -31,7 +49,7 @@ func (t *Transport) Send(remoteString string, msg []byte) {
 	if err != nil {
 		log.Fatal("Cannot resolve udp address: ", err)
 	}
-	bytesWritten, err := t.Conn.WriteToUDP(msg, remoteAddr)
+	bytesWritten, err := t.conn.WriteToUDP(msg, remoteAddr)
 	if err != nil {
 		log.Panicln("Error writing to socket: ", err)
 	}

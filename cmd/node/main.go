@@ -3,68 +3,27 @@ package main
 import (
 	"bufio"
 	"fmt"
-	network "ip/pkg/network"
-	transport "ip/pkg/transport"
+	link "ip/pkg/ipinterface"
+	"ip/pkg/network"
+	"ip/pkg/transport"
 	"log"
-	"net"
 	"os"
 	"strconv"
 	"strings"
 )
 
-const (
-	UDPADDR    = "localhost"
-	MAXMSGSIZE = 1400
-	STATEUP    = "up"
-	STATEDOWN  = "down"
-)
-
 type Node struct {
-	Name      string
-	Links     []network.Link
-	Transport transport.Transport
-	FwdTable  network.FwdTable
+	Name     string
+	FwdTable network.FwdTable
+	Conn     transport.Transport
 }
 
 func (node *Node) close() {
-	node.Transport.Conn.Close()
+	node.Conn.Close()
 }
 
-func (node *Node) getInterfacesString() *string {
-	res := "id  state    local       remote      port\n"
-	for _, link := range node.Links {
-		res += fmt.Sprintf("%d    %s      %s    %s   %s\n", link.Id, link.State, link.InterfaceIP, link.DestIP, link.DestUdpPort)
-	}
-	return &res
-}
-
-func (node *Node) printInterfaces() {
-	str := node.getInterfacesString()
-	fmt.Print(*str)
-}
-
-func (node *Node) printInterfacesToFile(filename string) {
-	file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0755)
-	if err != nil {
-		log.Fatalln("Error opening the file: ", err)
-	}
-	str := node.getInterfacesString()
-	file.Write([]byte(*str))
-	file.Close()
-}
-
-func (node *Node) setInterfaceState(id int, state string) {
-	for i := range node.Links {
-		link := &node.Links[i]
-		if link.Id == id {
-			link.State = state
-		}
-	}
-}
-
-func initializeNode(filename string, node *Node) int {
-	// parse the input link file and populate the link array
-	file, err := os.Open(filename)
+func (node *Node) init(linkFileName string) int {
+	file, err := os.Open(linkFileName)
 	if err != nil {
 		log.Fatal(err)
 		return 1
@@ -72,37 +31,26 @@ func initializeNode(filename string, node *Node) int {
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
-
 	// parse the first line && and start the listen udp connection
 	scanner.Scan()
 	firstLine := scanner.Text()
 	words := strings.Fields(firstLine)
 	_, udpPort := words[0], words[1]
-	// resolve udp4 address
-	listenString := fmt.Sprintf(":%s", udpPort)
-	listenAddr, err := net.ResolveUDPAddr("udp4", listenString)
-	if err != nil {
-		log.Fatal("Error resolving udp address: ", err)
-	}
-	// create connections
-	node.Transport = transport.Transport{}
-	node.Transport.Conn, err = net.ListenUDP("udp4", listenAddr)
-	if err != nil {
-		log.Fatal("Cannot create the udp connection: ", err)
-	}
+	node.Conn.Init(udpPort)
 
-	// parse the rest of file and populate node.Links
+	// parse the rest of file to get an array of ip interfaces
 	linkId := 0
+	var ipInterfaces []link.IpInterface
 	for scanner.Scan() {
 		words = strings.Fields(scanner.Text())
-		link := network.Link{
+		link := link.IpInterface{
 			Id:          linkId,
-			State:       STATEUP,
+			State:       link.INTERFACEUP,
 			DestAddr:    words[0],
 			DestUdpPort: words[1],
-			InterfaceIP: words[2],
-			DestIP:      words[3]}
-		node.Links = append(node.Links, link)
+			Ip:          words[2],
+			DestIp:      words[3]}
+		ipInterfaces = append(ipInterfaces, link)
 		linkId += 1
 	}
 
@@ -111,8 +59,8 @@ func initializeNode(filename string, node *Node) int {
 		return 1
 	}
 
-	// initialize FwdTable
-	node.FwdTable.Init(node.Links, node.Transport)
+	// initialize FwdTable with ip interfaces
+	node.FwdTable.Init(ipInterfaces, node.Conn)
 	return 0
 }
 
@@ -125,9 +73,9 @@ func handleCli(text string, node *Node) {
 		os.Exit(0)
 	} else if words[0] == "interfaces" || words[0] == "li" {
 		if len(words) == 1 {
-			node.printInterfaces()
+			link.PrintInterfaces(node.FwdTable.IpInterfaces)
 		} else if len(words) == 2 {
-			node.printInterfacesToFile(words[1])
+			link.PrintInterfacesToFile(node.FwdTable.IpInterfaces, words[1])
 		}
 	} else if words[0] == "routes" || words[0] == "lr" {
 		if len(words) == 1 {
@@ -135,13 +83,13 @@ func handleCli(text string, node *Node) {
 		} else if len(words) == 2 {
 
 		}
-	} else if words[0] == STATEUP || words[0] == STATEDOWN {
+	} else if words[0] == link.INTERFACEUP || words[0] == link.INTERFACEDOWN {
 		if len(words) == 2 {
-			id, err := strconv.Atoi(words[1])
+			interfaceId, err := strconv.Atoi(words[1])
 			if err != nil {
 				fmt.Printf("Invalid interface id: %s", words[1])
 			} else {
-				node.setInterfaceState(id, words[0])
+				node.FwdTable.SetInterfaceState(interfaceId, words[0])
 			}
 		}
 	} else if words[0] == "send" && len(words) >= 4 {
@@ -160,15 +108,12 @@ func main() {
 	}
 
 	var node Node
-	if initializeNode(os.Args[1], &node) != 0 {
+	if node.init(os.Args[1]) != 0 {
 		os.Exit(1)
 	}
 
-	// set up channels
+	// read from stdin
 	keyboardChan := make(chan string)
-	listenChan := make(chan []byte)
-
-	// read input from stdin
 	go func() {
 		scanner := bufio.NewScanner(os.Stdin)
 		for scanner.Scan() {
@@ -177,7 +122,9 @@ func main() {
 		}
 	}()
 
-	go node.Transport.Recv(&listenChan)
+	// start receiving udp packets
+	listenChan := make(chan []byte)
+	go node.Conn.Recv(&listenChan)
 
 	// Watch all channels, act on one when something happens
 	for {
