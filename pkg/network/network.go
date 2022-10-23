@@ -32,6 +32,7 @@ type FwdTable struct {
 	lock sync.RWMutex
 }
 
+// TODO:
 // Request Route Info
 func (ft *FwdTable) Init(links []link.IpInterface, conn transport.Transport) {
 	ft.lock.Lock()
@@ -42,6 +43,8 @@ func (ft *FwdTable) Init(links []link.IpInterface, conn transport.Transport) {
 		ft.IpInterfaces[link.DestIp] = link
 	}
 	ft.conn = conn
+
+	ft.applications = make(map[uint8]func([]byte, []interface{}))
 }
 
 func (ft *FwdTable) hasInterface(ip string) bool {
@@ -162,7 +165,6 @@ func (ft *FwdTable) HandlePacket(buffer []byte) {
 	msgBytes := buffer[hdr.Len:]
 	if ft.hasInterface(destIP) {
 		// we are the destination, call the handler for the appropriate application
-		fmt.Println(string(msgBytes))
 		handler, ok := ft.applications[uint8(hdr.Protocol)]
 		if !ok {
 			fmt.Println("Received packet with invalid protocol number")

@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	app "ip/pkg/applications"
 	link "ip/pkg/ipinterface"
 	"ip/pkg/network"
 	"ip/pkg/transport"
@@ -61,6 +62,9 @@ func (node *Node) init(linkFileName string) int {
 
 	// initialize FwdTable with ip interfaces
 	node.FwdTable.Init(ipInterfaces, node.Conn)
+
+	// register handlers
+	app.TestProtocolInit(&node.FwdTable)
 	return 0
 }
 
