@@ -84,9 +84,9 @@ func handleCli(text string, node *Node) {
 		}
 	} else if words[0] == "routes" || words[0] == "lr" {
 		if len(words) == 1 {
-
+			node.FwdTable.PrintFwdTableEntries()
 		} else if len(words) == 2 {
-
+			node.FwdTable.PrintFwdTableEntriesToFile(words[1])
 		}
 	} else if words[0] == link.INTERFACEUP || words[0] == link.INTERFACEDOWN {
 		if len(words) == 2 {
