@@ -38,6 +38,24 @@ type RipPacket struct {
 	entries []RipEntry
 }
 
+func (re RipEntry) String() string {
+	ipStruct := make(net.IP, 4)
+	binary.BigEndian.PutUint32(ipStruct, re.destIP)
+	return fmt.Sprintf("cost: %v\tdestination IP: %v\n", re.cost, ipStruct)
+}
+
+func (rp RipPacket) String() string {
+	var commandTypeStr string
+	if rp.command == CommandRequest {
+		commandTypeStr = "Request"
+	} else if rp.command == CommandResponse {
+		commandTypeStr = "Response"
+	} else {
+		commandTypeStr = "Unknown/Illegal"
+	}
+	return fmt.Sprintf("command: %v\nnum entries: %v\nentries:\n%v", commandTypeStr, len(rp.entries), rp.entries)
+}
+
 // -----------------------------------------------------------------------------
 // DONE
 func (p *RipPacket) Marshal() ([]byte, error) {
@@ -153,8 +171,10 @@ func RIPHandler(rawMsg []byte, params []interface{}) {
 				cost = INFINITY
 			}
 
+			// not able to convert IP from string to int32 -- check asap
 			destIPUint32 := uint32(binary.BigEndian.Uint32(net.ParseIP(destIP)))
 
+			fmt.Printf("HERE IS THE DESTINATION IP int32: %v\t str: %v", destIPUint32, destIP)
 			ripEntry := RipEntry{
 				cost:   cost,
 				destIP: destIPUint32,
