@@ -38,6 +38,24 @@ type RipPacket struct {
 	entries []RipEntry
 }
 
+func (re RipEntry) String() string {
+	ipStruct := make(net.IP, 4)
+	binary.BigEndian.PutUint32(ipStruct, re.destIP)
+	return fmt.Sprintf("cost: %v\tdestination IP: %v\n", re.cost, ipStruct)
+}
+
+func (rp RipPacket) String() string {
+	var commandTypeStr string
+	if rp.command == CommandRequest {
+		commandTypeStr = "Request"
+	} else if rp.command == CommandResponse {
+		commandTypeStr = "Response"
+	} else {
+		commandTypeStr = "Unknown/Illegal"
+	}
+	return fmt.Sprintf("command: %v\nnum entries: %v\nentries:\n%v", commandTypeStr, len(rp.entries), rp.entries)
+}
+
 // -----------------------------------------------------------------------------
 // DONE
 func (p *RipPacket) Marshal() ([]byte, error) {
@@ -121,38 +139,17 @@ func UnmarshalRipPacket(rawMsg []byte) (*RipPacket, error) {
 	return &p, nil
 }
 
-// -----------------------------------------------------------------------------
-func SendUpdateToIP(ip string, command uint16) (err error) {
-	// packet := RipPacket{
-	// 	command: command,
-	// 	entries: state.table,
-	// }
-	// packetBytes, err := packet.Marshal()
-
-	// if err != nil {
-	// fmt.Println(err)
-	// 	return
-	// }
-	// // how do I build up the header here?
-	// // also need to find the appropriate interface to
-	// // send the data on - basically the next hop for the packet
-	// // should be the interface that the packet is to be sent on
-	// // need to ask Nick about this
-	// state.transport.Send(ip, packetBytes)
-
-	return
-}
-
 func RIPHandler(rawMsg []byte, params []interface{}) {
 	hdr := params[0].(*ipv4.Header)
 	ripPacket, err := UnmarshalRipPacket(rawMsg)
 	if err != nil {
 		// not sure what to do if rip packet was invalid
-		fmt.Println("Error in unmarshalling packet: ", err)
+		fmt.Println("Error in unmarshalling rip packet: ", err)
 		return
 	}
 
 	if ripPacket.command == CommandResponse {
+		fmt.Println(hdr, ripPacket)
 		// handle response
 		// basically we go through each entry in the response and then update our table
 		// send out the updated entries to all the neighbours
@@ -160,7 +157,6 @@ func RIPHandler(rawMsg []byte, params []interface{}) {
 		// handle request
 		// we need to get where the request originated from and send an update to that IP
 		requestSrc := hdr.Src.String()
-		// TODO get the rip packet
 
 		FwdTable.Lock.RLock()
 		defer FwdTable.Lock.RUnlock()
@@ -175,8 +171,10 @@ func RIPHandler(rawMsg []byte, params []interface{}) {
 				cost = INFINITY
 			}
 
+			// not able to convert IP from string to int32 -- check asap
 			destIPUint32 := uint32(binary.BigEndian.Uint32(net.ParseIP(destIP)))
 
+			fmt.Printf("HERE IS THE DESTINATION IP int32: %v\t str: %v", destIPUint32, destIP)
 			ripEntry := RipEntry{
 				cost:   cost,
 				destIP: destIPUint32,
@@ -203,21 +201,21 @@ func RIPHandler(rawMsg []byte, params []interface{}) {
 	}
 }
 
-func PeriodicUpdate() {
-	// keep a last updated variable, if now - then > 12, expire
-	ticker := time.NewTicker(UpdateInterval)
+// func PeriodicUpdate() {
+// 	// keep a last updated variable, if now - then > 12, expire
+// 	ticker := time.NewTicker(UpdateInterval)
 
-	for {
-		select {
-		case _ = <-ticker.C:
-			// loop through the list of interfaces and send an updated version of the RIP table to each
-			{
-				ip := "PLACEHOLDER"
-				SendUpdateToIP(ip, CommandResponse)
-			}
-		}
-	}
-}
+// 	for {
+// 		select {
+// 		case _ = <-ticker.C:
+// 			// loop through the list of interfaces and send an updated version of the RIP table to each
+// 			{
+// 				ip := "PLACEHOLDER"
+// 				SendUpdateToIP(ip, CommandResponse)
+// 			}
+// 		}
+// 	}
+// }
 
 // TODO
 func RIPInit(fwdTable *network.FwdTable) {
@@ -225,7 +223,18 @@ func RIPInit(fwdTable *network.FwdTable) {
 	FwdTable.RegisterHandler(RipProtocolNum, RIPHandler)
 	// send our entry table to all neighbors
 	// TODO
+
 	// request entry table info from all neighbors
-	// TODO
-	go PeriodicUpdate()
+	for destIp := range FwdTable.IpInterfaces {
+		// create rip packet with command == request, num entries == 0
+		ripPacket := RipPacket{
+			command: CommandRequest,
+		}
+		rawBytes, err := ripPacket.Marshal()
+		if err != nil {
+			log.Fatalln("Unable to marshal request in RIPInit: ", err)
+		}
+		FwdTable.SendMsgToDestIP(destIp, RipProtocolNum, rawBytes)
+	}
+	// go PeriodicUpdate()
 }

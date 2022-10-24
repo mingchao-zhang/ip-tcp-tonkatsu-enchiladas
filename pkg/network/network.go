@@ -7,6 +7,7 @@ import (
 	"ip/pkg/transport"
 	"log"
 	"net"
+	"os"
 	"sync"
 	"time"
 
@@ -27,6 +28,15 @@ type FwdTableEntry struct {
 	Cost            uint32
 	LastUpdatedTime time.Time
 	Mask            uint32
+}
+
+func createFwdTableEntry(next string, cost uint32, lastUpdatedTime time.Time) FwdTableEntry {
+	return FwdTableEntry{
+		Next:            next,
+		Cost:            cost,
+		LastUpdatedTime: lastUpdatedTime,
+		Mask:            0xffffffff,
+	}
 }
 
 // -----------------------------------------------------------------------------
@@ -51,21 +61,10 @@ func (ft *FwdTable) Init(links []link.IpInterface, conn transport.Transport) {
 	for _, link := range links {
 		ft.IpInterfaces[link.DestIp] = link
 
-		neighborEntry := FwdTableEntry{
-			Next:            link.DestIp,
-			Cost:            1,
-			LastUpdatedTime: time.Time{},
-			Mask:            0xffffffff,
-		}
-		ft.EntryMap[link.DestIp] = neighborEntry
-
-		selfEntry := FwdTableEntry{
-			Next:            link.Ip,
-			Cost:            0,
-			LastUpdatedTime: time.Now().Add(time.Hour * 42),
-			Mask:            0xffffffff,
-		}
-		ft.EntryMap[link.Ip] = selfEntry
+		// neighbor entry
+		ft.EntryMap[link.DestIp] = createFwdTableEntry(link.DestIp, 1, time.Time{})
+		// self entry
+		ft.EntryMap[link.Ip] = createFwdTableEntry(link.Ip, 0, time.Now().Add(time.Hour*42))
 	}
 
 	ft.conn = conn
@@ -108,21 +107,29 @@ func (ft *FwdTable) RegisterHandler(protocolNum uint8, hf HandlerFunc) {
 }
 
 // -----------------------------------------------------------------------------
-// TODO
-// Need to modify Route as well later
-func (ft *FwdTable) SetInterfaceState(id int, state string) {
+func (ft *FwdTable) SetInterfaceState(id int, newState string) {
 	ft.Lock.Lock()
 	defer ft.Lock.Unlock()
 
-	for k, link := range ft.IpInterfaces {
-		if link.Id == id {
-			link.State = state
-			ft.IpInterfaces[k] = link
+	for k, ipInterface := range ft.IpInterfaces {
+		if ipInterface.Id == id {
+			destIP := ipInterface.DestIp
+			// ip interface changed
+			if newState != ipInterface.State {
+				if newState == link.INTERFACEUP {
+					ft.EntryMap[destIP] = createFwdTableEntry(destIP, 1, time.Time{})
+				} else {
+					delete(ft.EntryMap, destIP)
+				}
+			}
+
+			// Change the state in the link
+			ipInterface.State = newState
+			ft.IpInterfaces[k] = ipInterface
 		}
 	}
 }
 
-// TODO
 func ComputeChecksum(b []byte) uint16 {
 	checksum := header.Checksum(b, 0)
 	checksumInv := checksum ^ 0xffff
@@ -135,7 +142,6 @@ func ValidateChecksum(b []byte, fromHeader uint16) uint16 {
 	return checksum
 }
 
-// TODO: return err
 func (ft *FwdTable) SendMsgToDestIP(destIP string, procotol int, msg []byte) (err error) {
 	ft.Lock.RLock()
 	defer ft.Lock.RUnlock()
@@ -206,7 +212,7 @@ func (ft *FwdTable) HandlePacket(buffer []byte) (err error) {
 	}
 
 	destIP := hdr.Dst.String()
-	msgBytes := buffer[hdr.Len:]
+	msgBytes := buffer[hdr.Len:hdr.TotalLen]
 
 	if ft.isMyInterface(destIP) {
 		// we are the destination, call the handler for the appropriate application
@@ -258,6 +264,33 @@ func (ft *FwdTable) HandlePacket(buffer []byte) (err error) {
 	}
 	return nil
 
+}
+
+// -----------------------------------------------------------------------------
+func (ft *FwdTable) getFwdTableEntriesString() *string {
+	ft.Lock.RLock()
+	defer ft.Lock.RUnlock()
+
+	res := "dest               next       cost\n"
+	for destIP, fwdEntry := range ft.EntryMap {
+		res += fmt.Sprintf("%s     %s    %d\n", destIP, fwdEntry.Next, fwdEntry.Cost)
+	}
+	return &res
+}
+
+func (ft *FwdTable) PrintFwdTableEntries() {
+	entriesStr := ft.getFwdTableEntriesString()
+	fmt.Print(*entriesStr)
+}
+
+func (ft *FwdTable) PrintFwdTableEntriesToFile(filename string) {
+	file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0755)
+	if err != nil {
+		log.Fatalln("Error opening the file: ", err)
+	}
+	str := ft.getFwdTableEntriesString()
+	file.Write([]byte(*str))
+	file.Close()
 }
 
 // -----------------------------------------------------------------------------
