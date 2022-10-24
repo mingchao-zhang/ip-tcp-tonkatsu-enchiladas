@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	link "ip/pkg/ipinterface"
 	"ip/pkg/network"
 	"log"
 	"net"
@@ -195,39 +196,76 @@ func RIPHandler(rawMsg []byte, params []interface{}) {
 		return
 	}
 
+	srcIP := hdr.Src.String()
+
 	if ripPacket.command == CommandResponse {
 		fmt.Println(hdr, ripPacket)
 		// first acquire lock
 		FwdTable.Lock.Lock()
 		defer FwdTable.Lock.Unlock()
 
-		updatedEntries := make([]int, 0)
+		updatedEntries := make([]RipEntry, 0)
 
-		for i, entry := range ripPacket.entries {
-			
+		for _, entry := range ripPacket.entries {
+
 			ipStruct := make(net.IP, 4)
 			binary.BigEndian.PutUint32(ipStruct, entry.destIP)
-			
+
 			destIP := ipStruct.String()
 			currentFwdEntry, ok := FwdTable.EntryMap[destIP]
-			
+
+			// we won't necessarily use this
+			newCost := entry.cost + 1
+			newNextHop := srcIP
+			newFwdTableEntry := network.CreateFwdTableEntry(srcIP, newCost, time.Now())
+			trigUpdateRIPEntry := RipEntry{
+				cost:   newCost,
+				destIP: entry.destIP,
+				mask:   entry.mask,
+			}
+
 			if !ok {
-				FwdTable.EntryMap[destIP] = network.FwdTableEntry{
-					
+				FwdTable.EntryMap[destIP] = newFwdTableEntry
+				updatedEntries = append(updatedEntries, trigUpdateRIPEntry)
+			} else {
+				currentCost := currentFwdEntry.Cost
+				currentNextHop := currentFwdEntry.Next
+
+				if newCost < currentCost {
+					FwdTable.EntryMap[destIP] = newFwdTableEntry
+					updatedEntries = append(updatedEntries, trigUpdateRIPEntry)
+				} else if newCost > currentCost && newNextHop == currentNextHop {
+					FwdTable.EntryMap[destIP] = newFwdTableEntry
+					updatedEntries = append(updatedEntries, trigUpdateRIPEntry)
+				} else if newCost == currentCost {
+					FwdTable.EntryMap[destIP] = newFwdTableEntry
 				}
 			}
 
-			currentFwdEntry.Cost > (entry.cost + 1) {
-
+			p := RipPacket{
+				command: CommandResponse,
+				entries: ripEntries,
 			}
-			
+			packetBytes, err := p.Marshal()
+			if err != nil {
+				log.Println("Unable to marshal response packet to IP: ", neighborIP, "\nerror: ", err)
+			} else {
+				for destIP, inter := range FwdTable.IpInterfaces {
+					if destIP == srcIP || inter.State == link.INTERFACEDOWN {
+						continue
+					}
+					
+					err = FwdTable.SendMsgToDestIP(neighborIP, RipProtocolNum, packetBytes)
+					if err != nil {
+						log.Println("Error from SendMsgToIP: ", err)
+					}
+				}
+
 		}
 	} else {
-		requestSrc := hdr.Src.String()
-
-		err = SendRIPResponse(requestSrc)
+		err = SendRIPResponse(srcIP)
 		if err != nil {
-			log.Printf("Error when responding to a request from %v -- %v", requestSrc, err)
+			log.Printf("Error when responding to a request from %v -- %v", srcIP, err)
 		}
 	}
 }
