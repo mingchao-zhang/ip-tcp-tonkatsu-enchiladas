@@ -65,7 +65,7 @@ func (node *Node) init(linkFileName string) int {
 
 	// register handlers
 	app.TestProtocolInit(&node.FwdTable)
-	app.RIPInit(&node.FwdTable)
+	// app.RIPInit(&node.FwdTable)
 	return 0
 }
 
@@ -100,7 +100,7 @@ func handleCli(text string, node *Node) {
 	} else if words[0] == "send" && len(words) >= 4 {
 		msgStartIdx := len("send") + 1 + len(words[1]) + 1 + len(words[2]) + 1
 		msg := text[msgStartIdx:]
-		protocolNum, err := strconv.Atoi(text)
+		protocolNum, err := strconv.Atoi(words[2])
 		if err != nil {
 			fmt.Println("Error converting protocol number: ", err)
 			return

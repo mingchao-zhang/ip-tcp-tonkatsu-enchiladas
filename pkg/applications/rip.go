@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"ip/pkg/network"
+	"log"
+	"net"
 	"time"
 
 	"golang.org/x/net/ipv4"
@@ -154,13 +156,50 @@ func RIPHandler(rawMsg []byte, params []interface{}) {
 		// handle response
 		// basically we go through each entry in the response and then update our table
 		// send out the updated entries to all the neighbours
-	} else { // handle request
+	} else {
+		// handle request
 		// we need to get where the request originated from and send an update to that IP
 		requestSrc := hdr.Src.String()
 		// TODO get the rip packet
-		var TEMP []byte
+
+		FwdTable.Lock.RLock()
+		defer FwdTable.Lock.RUnlock()
+
+		var ripEntries []RipEntry
+
+		for destIP, fwdEntry := range FwdTable.EntryMap {
+			cost := fwdEntry.Cost
+			// if the next hop is the IP we're getting the request from
+			// use PR and set its cost to INFINITY
+			if fwdEntry.Next == requestSrc {
+				cost = INFINITY
+			}
+
+			destIPUint32 := uint32(binary.BigEndian.Uint32(net.ParseIP(destIP)))
+
+			ripEntry := RipEntry{
+				cost:   cost,
+				destIP: destIPUint32,
+				mask:   fwdEntry.Mask,
+			}
+			ripEntries = append(ripEntries, ripEntry)
+		}
+
+		p := RipPacket{
+			command: CommandResponse,
+			entries: ripEntries,
+		}
+
+		packetBytes, err := p.Marshal()
+		if err != nil {
+			log.Println("Unable to marshal response packet to IP: ", requestSrc, "\nerror: ", err)
+		}
+
 		// construct a rip packet, marshal it, use fwdTable to send to srcIP
-		FwdTable.SendMsgToDestIP(requestSrc, RipProtocolNum, TEMP)
+		err = FwdTable.SendMsgToDestIP(requestSrc, RipProtocolNum, packetBytes)
+		if err != nil {
+			log.Println("Error from SendMsgToIP: ", err)
+		}
 	}
 }
 
