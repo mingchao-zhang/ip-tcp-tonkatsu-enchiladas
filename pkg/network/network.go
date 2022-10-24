@@ -125,7 +125,8 @@ func ComputeChecksum(b []byte) uint16 {
 	return checksumInv
 }
 
-func (ft *FwdTable) SendMsgToDestIP(destIP string, procotol string, msg string) {
+// TODO: return err
+func (ft *FwdTable) SendMsgToDestIP(destIP string, procotol int, msg []byte) {
 	ft.lock.RLock()
 	ipInterface, ok := ft.IpInterfaces[destIP]
 	ft.lock.RUnlock()
@@ -144,7 +145,7 @@ func (ft *FwdTable) SendMsgToDestIP(destIP string, procotol string, msg string) 
 		Flags:    0,
 		FragOff:  0,
 		TTL:      32,
-		Protocol: 0,
+		Protocol: procotol,
 		Checksum: 0, // Should be 0 until checksum is computed
 		Src:      net.ParseIP(ipInterface.Ip),
 		Dst:      net.ParseIP(destIP),
@@ -162,7 +163,7 @@ func (ft *FwdTable) SendMsgToDestIP(destIP string, procotol string, msg string) 
 		log.Fatalln("Error marshalling header:  ", err)
 	}
 
-	fullPacket := append(headerBytes, []byte(msg)...)
+	fullPacket := append(headerBytes, msg...)
 	ft.HandlePacket(fullPacket)
 }
 

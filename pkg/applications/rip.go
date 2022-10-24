@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"ip/pkg/network"
 	"time"
+
+	"golang.org/x/net/ipv4"
 )
 
 const (
@@ -21,6 +23,7 @@ const (
 )
 
 var ErrMalformedPacket = errors.New("malformed packet")
+var FwdTable *network.FwdTable
 
 type RipEntry struct {
 	cost   uint32
@@ -138,11 +141,9 @@ func SendUpdateToIP(ip string, command uint16) (err error) {
 	return
 }
 
-func RIPHandler(packet []byte, params []interface{}) {
-	// hdr := params[0].(*ipv4.Header)
-	// fmt.Println(hdr)
-
-	ripPacket, err := UnmarshalRipPacket(packet)
+func RIPHandler(rawMsg []byte, params []interface{}) {
+	hdr := params[0].(*ipv4.Header)
+	ripPacket, err := UnmarshalRipPacket(rawMsg)
 	if err != nil {
 		// not sure what to do if rip packet was invalid
 		fmt.Println("Error in unmarshalling packet: ", err)
@@ -153,11 +154,13 @@ func RIPHandler(packet []byte, params []interface{}) {
 		// handle response
 		// basically we go through each entry in the response and then update our table
 		// send out the updated entries to all the neighbours
-	} else {
-		// handle request
+	} else { // handle request
 		// we need to get where the request originated from and send an update to that IP
-		ip := "PLACEHOLDER"
-		SendUpdateToIP(ip, CommandResponse)
+		requestSrc := hdr.Src.String()
+		// TODO get the rip packet
+		var TEMP []byte
+		// construct a rip packet, marshal it, use fwdTable to send to srcIP
+		FwdTable.SendMsgToDestIP(requestSrc, RipProtocolNum, TEMP)
 	}
 }
 
@@ -179,7 +182,8 @@ func PeriodicUpdate() {
 
 // TODO
 func RIPInit(fwdTable *network.FwdTable) {
-	fwdTable.RegisterHandler(RipProtocolNum, RIPHandler)
+	FwdTable = fwdTable
+	FwdTable.RegisterHandler(RipProtocolNum, RIPHandler)
 	// send our entry table to all neighbors
 	// TODO
 	// request entry table info from all neighbors
