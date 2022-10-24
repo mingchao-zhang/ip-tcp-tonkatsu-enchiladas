@@ -68,20 +68,21 @@ func (ft *FwdTable) Init(links []link.IpInterface, conn transport.Transport) {
 		ft.EntryMap[link.Ip] = selfEntry
 	}
 
-	// log.Fatalln("Line 71: ***\nFwdTable Entries: \n", ft.EntryMap, "\n\nIP Interfaces:\n", ft.IpInterfaces)
 	ft.conn = conn
 	ft.applications = make(map[uint8]func([]byte, []interface{}))
 }
 
 // DONE
-func (ft *FwdTable) hasInterface(nextHopIP string) bool {
+func (ft *FwdTable) isMyInterface(ip string) bool {
 	ft.Lock.RLock()
 	defer ft.Lock.RUnlock()
 
-	inter, ok := ft.IpInterfaces[nextHopIP]
-	if ok && inter.State == link.INTERFACEUP {
-		return true
+	for _, inter := range ft.IpInterfaces {
+		if inter.Ip == ip && inter.State == link.INTERFACEUP {
+			return true
+		}
 	}
+
 	return false
 }
 
@@ -141,14 +142,14 @@ func (ft *FwdTable) SendMsgToDestIP(destIP string, procotol int, msg []byte) (er
 	fwdEntry, ok := ft.EntryMap[destIP]
 	if !ok {
 		err = errors.New("cannot reach IP address" + destIP)
-		fmt.Printf("Can't reach the IP address: %s\n", destIP)
+		log.Printf("Can't reach the IP address: %s\n", destIP)
 		return
 	}
 
 	nextHopInterface, ok := ft.GetIpInterface(fwdEntry.Next)
 	if !ok {
 		err = errors.New("cannot get interface for IP" + fwdEntry.Next)
-		fmt.Printf("cannot get interface for IP" + fwdEntry.Next)
+		log.Printf("cannot get interface for IP" + fwdEntry.Next)
 		return
 	}
 
@@ -207,7 +208,7 @@ func (ft *FwdTable) HandlePacket(buffer []byte) (err error) {
 	destIP := hdr.Dst.String()
 	msgBytes := buffer[hdr.Len:]
 
-	if ft.hasInterface(destIP) {
+	if ft.isMyInterface(destIP) {
 		// we are the destination, call the handler for the appropriate application
 		handler, ok := ft.applications[uint8(hdr.Protocol)]
 		if !ok {
@@ -247,13 +248,10 @@ func (ft *FwdTable) HandlePacket(buffer []byte) (err error) {
 
 		nextHopLink, ok := ft.IpInterfaces[nextHopEntry.Next]
 		if !ok {
-			log.Fatalln("249: ************", nextHopEntry)
+			log.Fatalln("Get ready for a 0 on the project")
 		}
-		fmt.Println("248!!!! ", nextHopLink)
 
 		remoteString := fmt.Sprintf("%s:%s", nextHopLink.DestAddr, nextHopLink.DestUdpPort)
-
-		fmt.Println("250!!!! ", remoteString)
 
 		fullPacket := append(newHdrBytes, msgBytes...)
 		ft.conn.Send(remoteString, fullPacket)
