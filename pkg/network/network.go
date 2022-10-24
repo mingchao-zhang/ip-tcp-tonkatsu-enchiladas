@@ -206,7 +206,7 @@ func (ft *FwdTable) HandlePacket(buffer []byte) (err error) {
 	}
 
 	destIP := hdr.Dst.String()
-	msgBytes := buffer[hdr.Len:]
+	msgBytes := buffer[hdr.Len:hdr.TotalLen]
 
 	if ft.isMyInterface(destIP) {
 		// we are the destination, call the handler for the appropriate application

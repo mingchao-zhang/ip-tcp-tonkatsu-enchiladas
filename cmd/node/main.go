@@ -65,7 +65,7 @@ func (node *Node) init(linkFileName string) int {
 
 	// register handlers
 	app.TestProtocolInit(&node.FwdTable)
-	// app.RIPInit(&node.FwdTable)
+	app.RIPInit(&node.FwdTable)
 	return 0
 }
 
