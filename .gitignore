@@ -1,7 +1,6 @@
 *~
 \#*#
 *.o
-*.lnx
 *.txt
 .vagrant/
 .DS_Store
