@@ -4,46 +4,43 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"ip/pkg/network"
-	"ip/pkg/transport"
-	"sync"
+	"log"
+	"net"
 	"time"
+
+	"golang.org/x/net/ipv4"
 )
 
 const (
-	EntrySize        = 12
-	PacketHeaderSize = 4
-	CommandRequest   = 1
-	CommandResponse  = 2
-	INFINITY         = 16
-	UpdateInterval   = time.Second * 5
-	EntryStaleAfter  = time.Second * 12
+	RipEntrySize        = 12
+	RipPacketHeaderSize = 4
+	CommandRequest      = 1
+	CommandResponse     = 2
+	INFINITY            = 16
+	UpdateInterval      = time.Second * 5
+	EntryStaleAfter     = time.Second * 12
+	RipProtocolNum      = 200
 )
 
-type Entry struct {
-	cost    uint32
-	address uint32
-	mask    uint32
-}
-
-type Packet struct {
-	command uint16
-	entries []Entry
-}
-
-type Table = []Entry
-
-type ripState struct {
-	table     Table
-	transport transport.Transport
-	fwdtable  network.FwdTable
-	lock      *sync.RWMutex
-}
-
-var state ripState
 var ErrMalformedPacket = errors.New("malformed packet")
+var FwdTable *network.FwdTable
 
-func (p *Packet) Marshal() ([]byte, error) {
+type RipEntry struct {
+	cost   uint32
+	destIP uint32
+	mask   uint32
+}
+
+type RipPacket struct {
+	command uint16
+	entries []RipEntry
+}
+
+// -----------------------------------------------------------------------------
+// DONE
+func (p *RipPacket) Marshal() ([]byte, error) {
 	buff := new(bytes.Buffer)
 
 	err := binary.Write(buff, binary.BigEndian, p.command)
@@ -62,7 +59,7 @@ func (p *Packet) Marshal() ([]byte, error) {
 			return nil, err
 		}
 
-		err = binary.Write(buff, binary.BigEndian, entry.address)
+		err = binary.Write(buff, binary.BigEndian, entry.destIP)
 		if err != nil {
 			return nil, err
 		}
@@ -76,64 +73,46 @@ func (p *Packet) Marshal() ([]byte, error) {
 	return buff.Bytes(), nil
 }
 
-func SendUpdateToIP(ip string, command uint16) (err error) {
-	packet := Packet{
-		command: command,
-		entries: state.table,
-	}
-	packetBytes, err := packet.Marshal()
-	if err != nil {
-		return
-	}
-	// how do I build up the header here?
-	// also need to find the appropriate interface to
-	// send the data on - basically the next hop for the packet
-	// should be the interface that the packet is to be sent on
-	// need to ask Nick about this
-	state.transport.Send(ip, packetBytes)
-
-	return
-}
-
-func UnmarshalPacket(packet []byte) (*Packet, error) {
+// DONE
+func UnmarshalRipPacket(rawMsg []byte) (*RipPacket, error) {
 	// are there enough bytes for the header?
 	// are the remaining bytes a multiple of the size of an entry?
-	if len(packet) < PacketHeaderSize || (len(packet)-PacketHeaderSize)%EntrySize != 0 {
+	if len(rawMsg) < RipPacketHeaderSize || (len(rawMsg)-RipPacketHeaderSize)%RipEntrySize != 0 {
 		return nil, ErrMalformedPacket
 	}
 
-	p := Packet{}
+	p := RipPacket{}
 
-	p.command = binary.BigEndian.Uint16(packet[:2])
+	p.command = binary.BigEndian.Uint16(rawMsg[:2])
 	if (p.command != CommandRequest) && (p.command != CommandResponse) {
 		return nil, ErrMalformedPacket
 	}
 
-	numEntries := binary.BigEndian.Uint16(packet[2:4])
+	numEntries := binary.BigEndian.Uint16(rawMsg[2:4])
 
 	if p.command == CommandRequest && numEntries != 0 {
 		return nil, ErrMalformedPacket
 	}
 
-	numEntriesInPacket := (len(packet) - PacketHeaderSize) / 12
+	numEntriesInPacket := (len(rawMsg) - RipPacketHeaderSize) / RipEntrySize
 
-	// is the number of entries the same as the entries in the packet?
+	// is the number of entries the same as the entries in the rawMsg?
 	if numEntriesInPacket != int(numEntries) || numEntries > 64 {
 		return nil, ErrMalformedPacket
 	}
 
 	// at this point, we have read the command and the number of entries
 	for i := 0; i < numEntriesInPacket; i++ {
-		entryOffset := PacketHeaderSize + i*EntrySize
-		entryBytes := packet[entryOffset : entryOffset+EntrySize]
+		entryOffset := RipPacketHeaderSize + (i * RipEntrySize)
+		entryBytes := rawMsg[entryOffset : entryOffset+RipEntrySize]
 
-		entry := Entry{}
+		entry := RipEntry{}
 
 		entry.cost = binary.BigEndian.Uint32(entryBytes[:4])
 		if entry.cost > INFINITY {
 			return nil, ErrMalformedPacket
 		}
-		entry.address = binary.BigEndian.Uint32(entryBytes[4:8])
+		entry.destIP = binary.BigEndian.Uint32(entryBytes[4:8])
 		entry.mask = binary.BigEndian.Uint32(entryBytes[8:])
 
 		p.entries = append(p.entries, entry)
@@ -142,28 +121,86 @@ func UnmarshalPacket(packet []byte) (*Packet, error) {
 	return &p, nil
 }
 
-func RIPHandler(packet []byte, params []interface{}) {
-	//  handler will take a message and parse it
+// -----------------------------------------------------------------------------
+func SendUpdateToIP(ip string, command uint16) (err error) {
+	// packet := RipPacket{
+	// 	command: command,
+	// 	entries: state.table,
+	// }
+	// packetBytes, err := packet.Marshal()
 
-	// we need to parse data into the
-	// fmt.Printf("data: %v\n", data)
+	// if err != nil {
+	// fmt.Println(err)
+	// 	return
+	// }
+	// // how do I build up the header here?
+	// // also need to find the appropriate interface to
+	// // send the data on - basically the next hop for the packet
+	// // should be the interface that the packet is to be sent on
+	// // need to ask Nick about this
+	// state.transport.Send(ip, packetBytes)
 
-	p, err := UnmarshalPacket(packet)
+	return
+}
+
+func RIPHandler(rawMsg []byte, params []interface{}) {
+	hdr := params[0].(*ipv4.Header)
+	ripPacket, err := UnmarshalRipPacket(rawMsg)
 	if err != nil {
 		// not sure what to do if rip packet was invalid
+		fmt.Println("Error in unmarshalling packet: ", err)
+		return
 	}
 
-	if p.command == CommandResponse {
+	if ripPacket.command == CommandResponse {
 		// handle response
 		// basically we go through each entry in the response and then update our table
 		// send out the updated entries to all the neighbours
 	} else {
 		// handle request
 		// we need to get where the request originated from and send an update to that IP
-		ip := "PLACEHOLDER"
-		SendUpdateToIP(ip, CommandResponse)
-	}
+		requestSrc := hdr.Src.String()
+		// TODO get the rip packet
 
+		FwdTable.Lock.RLock()
+		defer FwdTable.Lock.RUnlock()
+
+		var ripEntries []RipEntry
+
+		for destIP, fwdEntry := range FwdTable.EntryMap {
+			cost := fwdEntry.Cost
+			// if the next hop is the IP we're getting the request from
+			// use PR and set its cost to INFINITY
+			if fwdEntry.Next == requestSrc {
+				cost = INFINITY
+			}
+
+			destIPUint32 := uint32(binary.BigEndian.Uint32(net.ParseIP(destIP)))
+
+			ripEntry := RipEntry{
+				cost:   cost,
+				destIP: destIPUint32,
+				mask:   fwdEntry.Mask,
+			}
+			ripEntries = append(ripEntries, ripEntry)
+		}
+
+		p := RipPacket{
+			command: CommandResponse,
+			entries: ripEntries,
+		}
+
+		packetBytes, err := p.Marshal()
+		if err != nil {
+			log.Println("Unable to marshal response packet to IP: ", requestSrc, "\nerror: ", err)
+		}
+
+		// construct a rip packet, marshal it, use fwdTable to send to srcIP
+		err = FwdTable.SendMsgToDestIP(requestSrc, RipProtocolNum, packetBytes)
+		if err != nil {
+			log.Println("Error from SendMsgToIP: ", err)
+		}
+	}
 }
 
 func PeriodicUpdate() {
@@ -182,10 +219,13 @@ func PeriodicUpdate() {
 	}
 }
 
-func RIPInit() {
-	// this will need some way to access the fwd table
-	// some way to access the node's info (like the interfaces and such)
-	// should Init register the handler? I think so
-
+// TODO
+func RIPInit(fwdTable *network.FwdTable) {
+	FwdTable = fwdTable
+	FwdTable.RegisterHandler(RipProtocolNum, RIPHandler)
+	// send our entry table to all neighbors
+	// TODO
+	// request entry table info from all neighbors
+	// TODO
 	go PeriodicUpdate()
 }

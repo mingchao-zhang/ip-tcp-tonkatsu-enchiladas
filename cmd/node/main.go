@@ -65,6 +65,7 @@ func (node *Node) init(linkFileName string) int {
 
 	// register handlers
 	app.TestProtocolInit(&node.FwdTable)
+	// app.RIPInit(&node.FwdTable)
 	return 0
 }
 
@@ -91,7 +92,7 @@ func handleCli(text string, node *Node) {
 		if len(words) == 2 {
 			interfaceId, err := strconv.Atoi(words[1])
 			if err != nil {
-				fmt.Printf("Invalid interface id: %s", words[1])
+				log.Printf("Invalid interface id: %s", words[1])
 			} else {
 				node.FwdTable.SetInterfaceState(interfaceId, words[0])
 			}
@@ -99,7 +100,12 @@ func handleCli(text string, node *Node) {
 	} else if words[0] == "send" && len(words) >= 4 {
 		msgStartIdx := len("send") + 1 + len(words[1]) + 1 + len(words[2]) + 1
 		msg := text[msgStartIdx:]
-		go node.FwdTable.SendMsgToDestIP(words[1], words[2], msg)
+		protocolNum, err := strconv.Atoi(words[2])
+		if err != nil {
+			log.Println("Error converting protocol number: ", err)
+			return
+		}
+		go node.FwdTable.SendMsgToDestIP(words[1], protocolNum, []byte(msg))
 	} else {
 		fmt.Println("Unsupported command")
 	}
@@ -107,7 +113,7 @@ func handleCli(text string, node *Node) {
 
 func main() {
 	if len(os.Args) != 2 {
-		fmt.Println("Incorrect number of arguments. Correct usage: node <linksfile>")
+		log.Println("Incorrect number of arguments. Correct usage: node <linksfile>")
 		os.Exit(1)
 	}
 
