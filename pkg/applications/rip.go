@@ -202,7 +202,6 @@ func RIPHandler(rawMsg []byte, params []interface{}) {
 			log.Printf("Error when responding to a request from %v -- %v", srcIP, err)
 		}
 	} else { // ripPacket.command == CommandResponse
-		fmt.Println(hdr, ripPacket)
 		// first acquire lock
 		FwdTable.Lock.Lock()
 		defer FwdTable.Lock.Unlock()
@@ -240,7 +239,7 @@ func RIPHandler(rawMsg []byte, params []interface{}) {
 				} else if newCost > currentCost && newNextHop == currentNextHop {
 					FwdTable.EntryMap[destIP] = newFwdTableEntry
 					updatedEntries = append(updatedEntries, trigUpdateRIPEntry)
-				} else if newCost == currentCost {
+				} else if newCost == currentCost && currentNextHop == newNextHop {
 					FwdTable.EntryMap[destIP] = newFwdTableEntry
 				}
 			}
@@ -265,7 +264,6 @@ func RIPHandler(rawMsg []byte, params []interface{}) {
 					log.Println("Error sending fwdTable to neighbors: ", err)
 				}
 			}
-
 		}
 
 		// send updated entries with poison to srcIP
@@ -280,6 +278,7 @@ func RIPHandler(rawMsg []byte, params []interface{}) {
 				command: CommandResponse,
 				entries: updatedEntriesWithPoison,
 			}
+
 			packetBytes, err = p.Marshal()
 			if err != nil {
 				log.Println("Unable to marshal response packet that's going to send to srcIP with posion reverse", "\nerror: ", err)

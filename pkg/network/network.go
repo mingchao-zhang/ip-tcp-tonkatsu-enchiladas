@@ -143,17 +143,22 @@ func ValidateChecksum(b []byte, fromHeader uint16) uint16 {
 func (ft *FwdTable) SendMsgToDestIP(destIP string, procotol int, msg []byte) (err error) {
 	ft.Lock.RLock()
 	defer ft.Lock.RUnlock()
-	fwdEntry, ok := ft.EntryMap[destIP]
-	if !ok {
-		err = errors.New("cannot reach IP address" + destIP)
-		return
-	}
 
-	nextHopInterface, ok := ft.GetIpInterface(fwdEntry.Next)
-	if !ok {
-		err = errors.New("cannot get interface for IP" + fwdEntry.Next)
-		log.Printf("cannot get interface for IP" + fwdEntry.Next)
-		return
+	var nextHopInterface *link.IpInterface
+	var ok bool
+	fwdEntry, inFwdEntryMap := ft.EntryMap[destIP]
+	if inFwdEntryMap {
+		nextHopInterface, ok = ft.GetIpInterface(fwdEntry.Next)
+		if !ok {
+			err = errors.New("Cannot find interface even given the next Hop in SendMsgToDestIP: " + fwdEntry.Next)
+			return
+		}
+	} else {
+		nextHopInterface, ok = ft.GetIpInterface(destIP)
+		if !ok {
+			err = errors.New("Cannot find interface even given the next Hop in SendMsgToDestIP: " + fwdEntry.Next)
+			return
+		}
 	}
 
 	hdr := ipv4.Header{
@@ -288,19 +293,4 @@ func (ft *FwdTable) PrintFwdTableEntriesToFile(filename string) {
 	str := ft.getFwdTableEntriesString()
 	file.Write([]byte(*str))
 	file.Close()
-}
-
-// -----------------------------------------------------------------------------
-func (ft *FwdTable) AddIpInterface(destIP string, inter *link.IpInterface) {
-	ft.Lock.Lock()
-	defer ft.Lock.Unlock()
-
-	ft.IpInterfaces[destIP] = *inter
-}
-
-func (ft *FwdTable) RemoveIpInterface(destIP string) {
-	ft.Lock.Lock()
-	defer ft.Lock.Unlock()
-
-	delete(ft.IpInterfaces, destIP)
 }
