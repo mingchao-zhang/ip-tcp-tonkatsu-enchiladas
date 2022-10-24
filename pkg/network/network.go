@@ -61,8 +61,6 @@ func (ft *FwdTable) Init(links []link.IpInterface, conn transport.Transport) {
 	for _, link := range links {
 		ft.IpInterfaces[link.DestIp] = link
 
-		// neighbor entry
-		ft.EntryMap[link.DestIp] = CreateFwdTableEntry(link.DestIp, 1, time.Time{})
 		// self entry
 		ft.EntryMap[link.Ip] = CreateFwdTableEntry(link.Ip, 0, time.Now().Add(time.Hour*42))
 	}
@@ -117,7 +115,7 @@ func (ft *FwdTable) SetInterfaceState(id int, newState string) {
 			// ip interface changed
 			if newState != ipInterface.State {
 				if newState == link.INTERFACEUP {
-					ft.EntryMap[destIP] = CreateFwdTableEntry(destIP, 1, time.Time{})
+					// ft.EntryMap[destIP] = CreateFwdTableEntry(destIP, 1, time.Time{})
 				} else {
 					delete(ft.EntryMap, destIP)
 				}
@@ -148,7 +146,6 @@ func (ft *FwdTable) SendMsgToDestIP(destIP string, procotol int, msg []byte) (er
 	fwdEntry, ok := ft.EntryMap[destIP]
 	if !ok {
 		err = errors.New("cannot reach IP address" + destIP)
-		log.Printf("Can't reach the IP address: %s\n", destIP)
 		return
 	}
 

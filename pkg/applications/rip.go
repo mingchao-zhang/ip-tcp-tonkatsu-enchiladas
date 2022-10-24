@@ -180,7 +180,6 @@ func SendRIPResponse(neighborIP string) error {
 
 	err = FwdTable.SendMsgToDestIP(neighborIP, RipProtocolNum, packetBytes)
 	if err != nil {
-		log.Println("Error from SendMsgToIP: ", err)
 		return err
 	}
 
@@ -197,15 +196,19 @@ func RIPHandler(rawMsg []byte, params []interface{}) {
 	}
 
 	srcIP := hdr.Src.String()
-
-	if ripPacket.command == CommandResponse {
+	if ripPacket.command == CommandRequest {
+		err = SendRIPResponse(srcIP)
+		if err != nil {
+			log.Printf("Error when responding to a request from %v -- %v", srcIP, err)
+		}
+	} else { // ripPacket.command == CommandResponse
 		fmt.Println(hdr, ripPacket)
 		// first acquire lock
 		FwdTable.Lock.Lock()
 		defer FwdTable.Lock.Unlock()
 
+		// update Fwd table entries and keep track of what entry is updated
 		updatedEntries := make([]RipEntry, 0)
-
 		for _, entry := range ripPacket.entries {
 
 			ipStruct := make(net.IP, 4)
@@ -241,31 +244,51 @@ func RIPHandler(rawMsg []byte, params []interface{}) {
 					FwdTable.EntryMap[destIP] = newFwdTableEntry
 				}
 			}
+		}
 
-			p := RipPacket{
-				command: CommandResponse,
-				entries: ripEntries,
-			}
-			packetBytes, err := p.Marshal()
-			if err != nil {
-				log.Println("Unable to marshal response packet to IP: ", neighborIP, "\nerror: ", err)
-			} else {
-				for destIP, inter := range FwdTable.IpInterfaces {
-					if destIP == srcIP || inter.State == link.INTERFACEDOWN {
-						continue
-					}
-					
-					err = FwdTable.SendMsgToDestIP(neighborIP, RipProtocolNum, packetBytes)
-					if err != nil {
-						log.Println("Error from SendMsgToIP: ", err)
-					}
+		// send updated entries to all neighbors that's not srcIP
+		p := RipPacket{
+			command: CommandResponse,
+			entries: updatedEntries,
+		}
+		packetBytes, err := p.Marshal()
+		if err != nil {
+			log.Println("Unable to marshal response packet that's going to send to neighbors", "\nerror: ", err)
+		} else {
+			for destIP, inter := range FwdTable.IpInterfaces {
+				if destIP == srcIP || inter.State == link.INTERFACEDOWN {
+					continue
 				}
 
+				err = FwdTable.SendMsgToDestIP(destIP, RipProtocolNum, packetBytes)
+				if err != nil {
+					log.Println("Error sending fwdTable to neighbors: ", err)
+				}
+			}
+
 		}
-	} else {
-		err = SendRIPResponse(srcIP)
-		if err != nil {
-			log.Printf("Error when responding to a request from %v -- %v", srcIP, err)
+
+		// send updated entries with poison to srcIP
+		if FwdTable.IpInterfaces[srcIP].State == link.INTERFACEUP {
+			updatedEntriesWithPoison := make([]RipEntry, 0)
+			for _, ripEntry := range updatedEntries {
+				ripEntry.cost = INFINITY
+				updatedEntriesWithPoison = append(updatedEntriesWithPoison, ripEntry)
+			}
+
+			p = RipPacket{
+				command: CommandResponse,
+				entries: updatedEntriesWithPoison,
+			}
+			packetBytes, err = p.Marshal()
+			if err != nil {
+				log.Println("Unable to marshal response packet that's going to send to srcIP with posion reverse", "\nerror: ", err)
+			} else {
+				err = FwdTable.SendMsgToDestIP(srcIP, RipProtocolNum, packetBytes)
+				if err != nil {
+					log.Println("Error sending fwdTable to srcIP: ", err)
+				}
+			}
 		}
 	}
 }
@@ -279,10 +302,9 @@ func PeriodicUpdate() {
 		<-ticker.C
 		// loop through the list of interfaces and send an updated version of the RIP table to each
 		for _, inter := range FwdTable.IpInterfaces {
-			neighborIP := inter.DestIp
-			err := SendRIPResponse(neighborIP)
-			if err != nil {
-				log.Printf("Error when sending periodic update to: %v -- %v", neighborIP, err)
+			if inter.State == link.INTERFACEUP {
+				neighborIP := inter.DestIp
+				SendRIPResponse(neighborIP)
 			}
 		}
 	}
