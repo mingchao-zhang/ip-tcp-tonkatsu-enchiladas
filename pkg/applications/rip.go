@@ -139,6 +139,53 @@ func UnmarshalRipPacket(rawMsg []byte) (*RipPacket, error) {
 	return &p, nil
 }
 
+func SendRIPResponse(neighborIP string) error {
+	FwdTable.Lock.RLock()
+	defer FwdTable.Lock.RUnlock()
+
+	var ripEntries []RipEntry
+
+	for destIP, fwdEntry := range FwdTable.EntryMap {
+		cost := fwdEntry.Cost
+		// if the next hop is the IP we're getting the request from
+		// use PR and set its cost to INFINITY
+		if fwdEntry.Next == neighborIP {
+			cost = INFINITY
+		}
+
+		// not able to convert IP from string to int32 -- check asap
+		ipStruct := net.ParseIP(destIP)
+		destIPUint32 := binary.BigEndian.Uint32(ipStruct.To4())
+
+		// fmt.Printf("HERE IS THE DESTINATION IP int32: 0x%08x\t str: %v\n", destIPUint32, ipStruct.String())
+		re := RipEntry{
+			cost:   cost,
+			destIP: destIPUint32,
+			mask:   fwdEntry.Mask,
+		}
+		ripEntries = append(ripEntries, re)
+	}
+
+	p := RipPacket{
+		command: CommandResponse,
+		entries: ripEntries,
+	}
+
+	packetBytes, err := p.Marshal()
+	if err != nil {
+		log.Println("Unable to marshal response packet to IP: ", neighborIP, "\nerror: ", err)
+		return err
+	}
+
+	err = FwdTable.SendMsgToDestIP(neighborIP, RipProtocolNum, packetBytes)
+	if err != nil {
+		log.Println("Error from SendMsgToIP: ", err)
+		return err
+	}
+
+	return nil
+}
+
 func RIPHandler(rawMsg []byte, params []interface{}) {
 	hdr := params[0].(*ipv4.Header)
 	ripPacket, err := UnmarshalRipPacket(rawMsg)
@@ -150,72 +197,58 @@ func RIPHandler(rawMsg []byte, params []interface{}) {
 
 	if ripPacket.command == CommandResponse {
 		fmt.Println(hdr, ripPacket)
-		// handle response
-		// basically we go through each entry in the response and then update our table
-		// send out the updated entries to all the neighbours
+		// first acquire lock
+		FwdTable.Lock.Lock()
+		defer FwdTable.Lock.Unlock()
+
+		updatedEntries := make([]int, 0)
+
+		for i, entry := range ripPacket.entries {
+			
+			ipStruct := make(net.IP, 4)
+			binary.BigEndian.PutUint32(ipStruct, entry.destIP)
+			
+			destIP := ipStruct.String()
+			currentFwdEntry, ok := FwdTable.EntryMap[destIP]
+			
+			if !ok {
+				FwdTable.EntryMap[destIP] = network.FwdTableEntry{
+					
+				}
+			}
+
+			currentFwdEntry.Cost > (entry.cost + 1) {
+
+			}
+			
+		}
 	} else {
-		// handle request
-		// we need to get where the request originated from and send an update to that IP
 		requestSrc := hdr.Src.String()
 
-		FwdTable.Lock.RLock()
-		defer FwdTable.Lock.RUnlock()
-
-		var ripEntries []RipEntry
-
-		for destIP, fwdEntry := range FwdTable.EntryMap {
-			cost := fwdEntry.Cost
-			// if the next hop is the IP we're getting the request from
-			// use PR and set its cost to INFINITY
-			if fwdEntry.Next == requestSrc {
-				cost = INFINITY
-			}
-
-			// not able to convert IP from string to int32 -- check asap
-			destIPUint32 := uint32(binary.BigEndian.Uint32(net.ParseIP(destIP)))
-
-			fmt.Printf("HERE IS THE DESTINATION IP int32: %v\t str: %v", destIPUint32, destIP)
-			ripEntry := RipEntry{
-				cost:   cost,
-				destIP: destIPUint32,
-				mask:   fwdEntry.Mask,
-			}
-			ripEntries = append(ripEntries, ripEntry)
-		}
-
-		p := RipPacket{
-			command: CommandResponse,
-			entries: ripEntries,
-		}
-
-		packetBytes, err := p.Marshal()
+		err = SendRIPResponse(requestSrc)
 		if err != nil {
-			log.Println("Unable to marshal response packet to IP: ", requestSrc, "\nerror: ", err)
-		}
-
-		// construct a rip packet, marshal it, use fwdTable to send to srcIP
-		err = FwdTable.SendMsgToDestIP(requestSrc, RipProtocolNum, packetBytes)
-		if err != nil {
-			log.Println("Error from SendMsgToIP: ", err)
+			log.Printf("Error when responding to a request from %v -- %v", requestSrc, err)
 		}
 	}
 }
 
-// func PeriodicUpdate() {
-// 	// keep a last updated variable, if now - then > 12, expire
-// 	ticker := time.NewTicker(UpdateInterval)
+func PeriodicUpdate() {
+	// keep a last updated variable, if now - then > 12, expire
+	ticker := time.NewTicker(UpdateInterval)
 
-// 	for {
-// 		select {
-// 		case _ = <-ticker.C:
-// 			// loop through the list of interfaces and send an updated version of the RIP table to each
-// 			{
-// 				ip := "PLACEHOLDER"
-// 				SendUpdateToIP(ip, CommandResponse)
-// 			}
-// 		}
-// 	}
-// }
+	for {
+		// wait for ticker to go off
+		<-ticker.C
+		// loop through the list of interfaces and send an updated version of the RIP table to each
+		for _, inter := range FwdTable.IpInterfaces {
+			neighborIP := inter.DestIp
+			err := SendRIPResponse(neighborIP)
+			if err != nil {
+				log.Printf("Error when sending periodic update to: %v -- %v", neighborIP, err)
+			}
+		}
+	}
+}
 
 // TODO
 func RIPInit(fwdTable *network.FwdTable) {
@@ -225,16 +258,19 @@ func RIPInit(fwdTable *network.FwdTable) {
 	// TODO
 
 	// request entry table info from all neighbors
+	ripPacket := RipPacket{
+		command: CommandRequest,
+	}
+	rawBytes, err := ripPacket.Marshal()
+	if err != nil {
+		log.Fatalln("Unable to marshal request in RIPInit: ", err)
+	}
 	for destIp := range FwdTable.IpInterfaces {
 		// create rip packet with command == request, num entries == 0
-		ripPacket := RipPacket{
-			command: CommandRequest,
-		}
-		rawBytes, err := ripPacket.Marshal()
-		if err != nil {
-			log.Fatalln("Unable to marshal request in RIPInit: ", err)
-		}
 		FwdTable.SendMsgToDestIP(destIp, RipProtocolNum, rawBytes)
 	}
-	// go PeriodicUpdate()
+
+	// add function to remove stale entries from fwdtable perioridically (every 2 seconds or so)
+
+	go PeriodicUpdate()
 }
