@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/google/netstack/tcpip/header"
 	"golang.org/x/net/ipv4"
@@ -16,70 +17,94 @@ type HandlerFunc = func([]byte, []interface{})
 
 // -----------------------------------------------------------------------------
 // Route
-type Route struct {
-	Dest string // dest VIP
-	Next string // next hop VIP
-	Cost int
+type FwdTableEntry struct {
+	Dest            string // dest VIP
+	Next            string // next hop VIP
+	Cost            int
+	LastUpdatedTime time.Time
+	Mask            uint32
 }
 
 // -----------------------------------------------------------------------------
 // FwdTable
 type FwdTable struct {
-	IpInterfaces map[string]link.IpInterface
+	EntryMap     map[string]FwdTableEntry
+	IpInterfaces map[string]link.IpInterface // physical links
 	applications map[uint8]HandlerFunc
 
 	conn transport.Transport
 	lock sync.RWMutex
 }
 
-// TODO:
-// Request Route Info
+// DONE
 func (ft *FwdTable) Init(links []link.IpInterface, conn transport.Transport) {
 	ft.lock.Lock()
 	defer ft.lock.Unlock()
 
+	// populate EntryMap and IpInterfaces
 	ft.IpInterfaces = make(map[string]link.IpInterface)
+	ft.EntryMap = make(map[string]FwdTableEntry)
 	for _, link := range links {
 		ft.IpInterfaces[link.DestIp] = link
-	}
-	ft.conn = conn
 
+		neighborEntry := FwdTableEntry{
+			Dest:            link.DestIp,
+			Next:            link.DestIp,
+			Cost:            1,
+			LastUpdatedTime: time.Time{},
+			Mask:            0xffffffff,
+		}
+		ft.EntryMap[link.DestIp] = neighborEntry
+
+		selfEntry := FwdTableEntry{
+			Dest:            link.Ip,
+			Next:            link.Ip,
+			Cost:            0,
+			LastUpdatedTime: time.Now().Add(time.Hour * 42),
+			Mask:            0xffffffff,
+		}
+		ft.EntryMap[link.Ip] = selfEntry
+	}
+
+	ft.conn = conn
 	ft.applications = make(map[uint8]func([]byte, []interface{}))
 }
 
-func (ft *FwdTable) hasInterface(ip string) bool {
+// DONE
+func (ft *FwdTable) hasInterface(nextHopIP string) bool {
 	ft.lock.RLock()
 	defer ft.lock.RUnlock()
-	for _, inter := range ft.IpInterfaces {
-		if inter.Ip == ip && inter.State == link.INTERFACEUP {
-			return true
-		}
+
+	inter, ok := ft.IpInterfaces[nextHopIP]
+	if ok && inter.State == link.INTERFACEUP {
+		return true
 	}
 	return false
 }
 
-func (ft *FwdTable) AddIpInterface(destIP string, inter *link.IpInterface) {
-	ft.lock.Lock()
-	defer ft.lock.Unlock()
-
-	ft.IpInterfaces[destIP] = *inter
-}
-
-func (ft *FwdTable) RemoveIpInterface(destIP string) {
-	ft.lock.Lock()
-	defer ft.lock.Unlock()
-
-	delete(ft.IpInterfaces, destIP)
-}
-
-func (ft *FwdTable) GetIpInterface(destIP string) (*link.IpInterface, bool) {
+// DONE
+func (ft *FwdTable) GetIpInterface(nextHopIP string) (*link.IpInterface, bool) {
 	ft.lock.RLock()
 	defer ft.lock.RUnlock()
 
-	inter, ok := ft.IpInterfaces[destIP]
-	return &inter, ok
+	inter, ok := ft.IpInterfaces[nextHopIP]
+	if ok {
+		return &inter, ok
+	} else {
+		return nil, ok
+	}
 }
 
+// DONE
+func (ft *FwdTable) RegisterHandler(protocolNum uint8, hf HandlerFunc) {
+	ft.lock.Lock()
+	defer ft.lock.Unlock()
+
+	ft.applications[protocolNum] = hf
+}
+
+// -----------------------------------------------------------------------------
+// TODO
 // Need to modify Route as well later
 func (ft *FwdTable) SetInterfaceState(id int, state string) {
 	ft.lock.Lock()
@@ -91,13 +116,6 @@ func (ft *FwdTable) SetInterfaceState(id int, state string) {
 			ft.IpInterfaces[k] = link
 		}
 	}
-}
-
-func (ft *FwdTable) RegisterHandler(protocolNum uint8, hf HandlerFunc) {
-	ft.lock.Lock()
-	defer ft.lock.Unlock()
-
-	ft.applications[protocolNum] = hf
 }
 
 // TODO
@@ -204,4 +222,19 @@ func (ft *FwdTable) HandlePacket(buffer []byte) {
 		ft.conn.Send(remoteString, fullPacket)
 	}
 
+}
+
+// -----------------------------------------------------------------------------
+func (ft *FwdTable) AddIpInterface(destIP string, inter *link.IpInterface) {
+	ft.lock.Lock()
+	defer ft.lock.Unlock()
+
+	ft.IpInterfaces[destIP] = *inter
+}
+
+func (ft *FwdTable) RemoveIpInterface(destIP string) {
+	ft.lock.Lock()
+	defer ft.lock.Unlock()
+
+	delete(ft.IpInterfaces, destIP)
 }
