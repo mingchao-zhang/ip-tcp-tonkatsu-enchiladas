@@ -216,6 +216,9 @@ func (ft *FwdTable) HandlePacket(buffer []byte) (err error) {
 	destIP := hdr.Dst.String()
 	msgBytes := buffer[hdr.Len:hdr.TotalLen]
 
+	ft.Lock.RLock()
+	defer ft.Lock.RUnlock()
+
 	if ft.isMyInterface(destIP) {
 		// we are the destination, call the handler for the appropriate application
 		handler, ok := ft.applications[uint8(hdr.Protocol)]
@@ -223,7 +226,7 @@ func (ft *FwdTable) HandlePacket(buffer []byte) (err error) {
 			log.Println("Invalid protocol number in HandlePacket")
 			return errors.New("invalid protocol number in IP header")
 		}
-
+		ft.Lock.RUnlock()
 		handler(msgBytes, []interface{}{hdr})
 	} else {
 		// not the destination, forward to next hop

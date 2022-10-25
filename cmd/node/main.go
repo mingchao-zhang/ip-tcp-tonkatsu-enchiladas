@@ -77,6 +77,8 @@ func handleCli(text string, node *Node) {
 		node.close()
 		os.Exit(0)
 	} else if words[0] == "interfaces" || words[0] == "li" {
+		node.FwdTable.Lock.RLock()
+		defer node.FwdTable.Lock.RUnlock()
 		if len(words) == 1 {
 			link.PrintInterfaces(node.FwdTable.IpInterfaces)
 		} else if len(words) == 2 {

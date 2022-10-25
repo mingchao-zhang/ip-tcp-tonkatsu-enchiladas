@@ -204,7 +204,6 @@ func RIPHandler(rawMsg []byte, params []interface{}) {
 	} else { // ripPacket.command == CommandResponse
 		// first acquire lock
 		FwdTable.Lock.Lock()
-		defer FwdTable.Lock.Unlock()
 
 		// update Fwd table entries and keep track of what entry is updated
 		updatedEntries := make([]RipEntry, 0)
@@ -244,6 +243,10 @@ func RIPHandler(rawMsg []byte, params []interface{}) {
 				}
 			}
 		}
+		FwdTable.Lock.Unlock()
+
+		FwdTable.Lock.RLock()
+		defer FwdTable.Lock.RUnlock()
 
 		// send updated entries to all neighbors that's not srcIP
 		p := RipPacket{
