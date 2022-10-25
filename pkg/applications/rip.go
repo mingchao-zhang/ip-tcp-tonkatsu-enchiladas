@@ -180,7 +180,7 @@ func SendRIPResponse(neighborIP string) error {
 		return err
 	}
 
-	err = FwdTable.SendMsgToDestIP(neighborIP, RipProtocolNum, packetBytes)
+	err = FwdTable.SendMsgToDestIP(neighborIP, RipProtocolNum, packetBytes, true)
 	if err != nil {
 		return err
 	}
@@ -271,7 +271,7 @@ func RIPHandler(rawMsg []byte, params []interface{}) {
 					continue
 				}
 
-				err = FwdTable.SendMsgToDestIP(destIP, RipProtocolNum, packetBytes)
+				err = FwdTable.SendMsgToDestIP(destIP, RipProtocolNum, packetBytes, false)
 				if err != nil {
 					log.Println("Error sending fwdTable to neighbors: ", err)
 				}
@@ -311,13 +311,15 @@ func PeriodicExpiry() {
 		// wait for ticker to go off
 		<-ticker.C
 		now := time.Now()
-		FwdTable.Lock.Lock()
+		FwdTable.Lock.RLock()
 		toDelete := make([]string, 0)
 		for destIP, entry := range FwdTable.EntryMap {
 			if (now.Sub(entry.LastUpdatedTime) > EntryStaleAfter) || (entry.Cost >= INFINITY) {
 				toDelete = append(toDelete, destIP)
 			}
 		}
+		FwdTable.Lock.RUnlock()
+		FwdTable.Lock.Lock()
 		for _, destIP := range toDelete {
 			delete(FwdTable.EntryMap, destIP)
 		}
@@ -363,7 +365,7 @@ func RIPInit(fwdTable *network.FwdTable) {
 	}
 	for destIp := range FwdTable.IpInterfaces {
 		// create rip packet with command == request, num entries == 0
-		FwdTable.SendMsgToDestIP(destIp, RipProtocolNum, rawBytes)
+		FwdTable.SendMsgToDestIP(destIp, RipProtocolNum, rawBytes, true)
 	}
 
 	// add function to remove stale entries from fwdtable perioridically (every 2 seconds or so)

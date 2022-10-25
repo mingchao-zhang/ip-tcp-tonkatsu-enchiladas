@@ -86,9 +86,9 @@ func handleCli(text string, node *Node) {
 		}
 	} else if words[0] == "routes" || words[0] == "lr" {
 		if len(words) == 1 {
-			node.FwdTable.PrintFwdTableEntries()
+			node.FwdTable.PrintFwdTableEntries(true)
 		} else if len(words) == 2 {
-			node.FwdTable.PrintFwdTableEntriesToFile(words[1])
+			node.FwdTable.PrintFwdTableEntriesToFile(words[1], true)
 		}
 	} else if words[0] == link.INTERFACEUP || words[0] == link.INTERFACEDOWN {
 		if len(words) == 2 {
@@ -107,7 +107,7 @@ func handleCli(text string, node *Node) {
 			log.Println("Error converting protocol number: ", err)
 			return
 		}
-		go node.FwdTable.SendMsgToDestIP(words[1], protocolNum, []byte(msg))
+		go node.FwdTable.SendMsgToDestIP(words[1], protocolNum, []byte(msg), true)
 	} else {
 		fmt.Println("Unsupported command")
 	}

@@ -8,8 +8,9 @@ import (
 	"log"
 	"net"
 	"os"
-	"sync"
 	"time"
+
+	"sync"
 
 	"github.com/google/netstack/tcpip/header"
 	"golang.org/x/net/ipv4"
@@ -71,9 +72,12 @@ func (ft *FwdTable) Init(links []link.IpInterface, conn transport.Transport) {
 }
 
 // DONE
-func (ft *FwdTable) getMyInterface(ip string) (*link.IpInterface, bool) {
-	ft.Lock.RLock()
-	defer ft.Lock.RUnlock()
+func (ft *FwdTable) getMyInterface(ip string, lock bool) (*link.IpInterface, bool) {
+
+	if lock {
+		ft.Lock.RLock()
+		defer ft.Lock.RUnlock()
+	}
 
 	for _, inter := range ft.IpInterfaces {
 		if inter.Ip == ip {
@@ -85,10 +89,12 @@ func (ft *FwdTable) getMyInterface(ip string) (*link.IpInterface, bool) {
 }
 
 // DONE
-func (ft *FwdTable) GetIpInterface(nextHopIP string) (*link.IpInterface, bool) {
+func (ft *FwdTable) GetIpInterface(nextHopIP string, lock bool) (*link.IpInterface, bool) {
 	// 	fmt.Println("---GetIpInterface")
-	ft.Lock.RLock()
-	defer ft.Lock.RUnlock()
+	if lock {
+		ft.Lock.RLock()
+		defer ft.Lock.RUnlock()
+	}
 
 	inter, ok := ft.IpInterfaces[nextHopIP]
 	if ok {
@@ -148,22 +154,23 @@ func ValidateChecksum(b []byte, fromHeader uint16) uint16 {
 	return checksum
 }
 
-func (ft *FwdTable) SendMsgToDestIP(destIP string, procotol int, msg []byte) (err error) {
+func (ft *FwdTable) SendMsgToDestIP(destIP string, procotol int, msg []byte, lock bool) (err error) {
 	// 	fmt.Println("---SendMsgToDestIP")
-	ft.Lock.RLock()
-	defer ft.Lock.RUnlock()
-
+	if lock {
+		ft.Lock.RLock()
+		defer ft.Lock.RUnlock()
+	}
 	var nextHopInterface *link.IpInterface
 	var ok bool
 	fwdEntry, inFwdEntryMap := ft.EntryMap[destIP]
 	if inFwdEntryMap {
-		nextHopInterface, ok = ft.GetIpInterface(fwdEntry.Next)
+		nextHopInterface, ok = ft.GetIpInterface(fwdEntry.Next, false)
 		if !ok {
 			err = errors.New("Cannot find interface even given the next Hop in SendMsgToDestIP: " + fwdEntry.Next)
 			return
 		}
 	} else {
-		nextHopInterface, ok = ft.GetIpInterface(destIP)
+		nextHopInterface, ok = ft.GetIpInterface(destIP, false)
 		if !ok {
 			err = errors.New("Cannot find interface even given the next Hop in SendMsgToDestIP: " + fwdEntry.Next)
 			return
@@ -226,7 +233,7 @@ func (ft *FwdTable) HandlePacket(buffer []byte) (err error) {
 	destIP := hdr.Dst.String()
 	msgBytes := buffer[hdr.Len:hdr.TotalLen]
 
-	myInterface, ok := ft.getMyInterface(destIP)
+	myInterface, ok := ft.getMyInterface(destIP, true)
 	if ok {
 		if myInterface.State == link.INTERFACEDOWN {
 			return
@@ -243,7 +250,6 @@ func (ft *FwdTable) HandlePacket(buffer []byte) (err error) {
 		// what do we do if we don't know a next hop for this destination???
 		ft.Lock.RLock()
 		nextHopEntry, ok := ft.EntryMap[destIP]
-		ft.Lock.RUnlock()
 		if !ok {
 			log.Println("Don't know how to get to this destination: ", destIP)
 			return errors.New("don't have a next hop for this destination")
@@ -269,11 +275,10 @@ func (ft *FwdTable) HandlePacket(buffer []byte) (err error) {
 			return errors.New("unable to marshal header")
 		}
 
-		ft.Lock.RLock()
 		nextHopLink, ok := ft.IpInterfaces[nextHopEntry.Next]
 		ft.Lock.RUnlock()
 		if !ok {
-			ft.PrintFwdTableEntries()
+			// ft.PrintFwdTableEntries()
 			fmt.Println("*******")
 			link.PrintInterfaces(ft.IpInterfaces)
 		}
@@ -288,10 +293,11 @@ func (ft *FwdTable) HandlePacket(buffer []byte) (err error) {
 }
 
 // -----------------------------------------------------------------------------
-func (ft *FwdTable) getFwdTableEntriesString() *string {
-	ft.Lock.RLock()
-	defer ft.Lock.RUnlock()
-
+func (ft *FwdTable) getFwdTableEntriesString(lock bool) *string {
+	if lock {
+		ft.Lock.RLock()
+		defer ft.Lock.RUnlock()
+	}
 	res := "dest               next       cost\n"
 	for destIP, fwdEntry := range ft.EntryMap {
 		res += fmt.Sprintf("%s     %s    %d\n", destIP, fwdEntry.Next, fwdEntry.Cost)
@@ -299,18 +305,26 @@ func (ft *FwdTable) getFwdTableEntriesString() *string {
 	return &res
 }
 
-func (ft *FwdTable) PrintFwdTableEntries() {
+func (ft *FwdTable) PrintFwdTableEntries(lock bool) {
 	// 	fmt.Println("---PrintFwdTableEntries")
-	entriesStr := ft.getFwdTableEntriesString()
+	if lock {
+		ft.Lock.RLock()
+		defer ft.Lock.RUnlock()
+	}
+	entriesStr := ft.getFwdTableEntriesString(false)
 	fmt.Print(*entriesStr)
 }
 
-func (ft *FwdTable) PrintFwdTableEntriesToFile(filename string) {
+func (ft *FwdTable) PrintFwdTableEntriesToFile(filename string, lock bool) {
+	if lock {
+		ft.Lock.RLock()
+		defer ft.Lock.RUnlock()
+	}
 	file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0755)
 	if err != nil {
 		log.Fatalln("Error opening the file: ", err)
 	}
-	str := ft.getFwdTableEntriesString()
+	str := ft.getFwdTableEntriesString(false)
 	file.Write([]byte(*str))
 	file.Close()
 }
