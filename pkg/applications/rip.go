@@ -142,7 +142,6 @@ func UnmarshalRipPacket(rawMsg []byte) (*RipPacket, error) {
 
 func SendRIPResponse(neighborIP string) error {
 	FwdTable.Lock.RLock()
-	defer FwdTable.Lock.RUnlock()
 
 	var ripEntries []RipEntry
 
@@ -166,6 +165,7 @@ func SendRIPResponse(neighborIP string) error {
 		}
 		ripEntries = append(ripEntries, re)
 	}
+	FwdTable.Lock.RUnlock()
 
 	p := RipPacket{
 		command: CommandResponse,
