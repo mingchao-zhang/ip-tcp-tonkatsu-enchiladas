@@ -21,6 +21,7 @@ const (
 	CommandResponse     = 2
 	INFINITY            = 16
 	UpdateInterval      = time.Second * 5
+	ExpiryInterval      = time.Second * 1
 	EntryStaleAfter     = time.Second * 12
 	RipProtocolNum      = 200
 )
@@ -141,6 +142,7 @@ func UnmarshalRipPacket(rawMsg []byte) (*RipPacket, error) {
 }
 
 func SendRIPResponse(neighborIP string) error {
+	// 	// fmt.Println("---SendRIPResponse")
 	FwdTable.Lock.RLock()
 
 	var ripEntries []RipEntry
@@ -187,11 +189,12 @@ func SendRIPResponse(neighborIP string) error {
 }
 
 func RIPHandler(rawMsg []byte, params []interface{}) {
+	// 	fmt.Println("---RIPHandler")
 	hdr := params[0].(*ipv4.Header)
 	ripPacket, err := UnmarshalRipPacket(rawMsg)
 	if err != nil {
 		// not sure what to do if rip packet was invalid
-		fmt.Println("Error in unmarshalling rip packet: ", err)
+		log.Fatalln("Error in unmarshalling rip packet: ", err)
 		return
 	}
 
@@ -217,6 +220,10 @@ func RIPHandler(rawMsg []byte, params []interface{}) {
 
 			// we won't necessarily use this
 			newCost := entry.cost + 1
+			if newCost > INFINITY {
+				newCost = INFINITY
+			}
+
 			newNextHop := srcIP
 			newFwdTableEntry := network.CreateFwdTableEntry(srcIP, newCost, time.Now())
 			trigUpdateRIPEntry := RipEntry{
@@ -248,7 +255,9 @@ func RIPHandler(rawMsg []byte, params []interface{}) {
 		FwdTable.Lock.RLock()
 		defer FwdTable.Lock.RUnlock()
 
+		// trigger updates
 		// send updated entries to all neighbors that's not srcIP
+
 		p := RipPacket{
 			command: CommandResponse,
 			entries: updatedEntries,
@@ -269,33 +278,55 @@ func RIPHandler(rawMsg []byte, params []interface{}) {
 			}
 		}
 
-		// send updated entries with poison to srcIP
-		if FwdTable.IpInterfaces[srcIP].State == link.INTERFACEUP {
-			updatedEntriesWithPoison := make([]RipEntry, 0)
-			for _, ripEntry := range updatedEntries {
-				ripEntry.cost = INFINITY
-				updatedEntriesWithPoison = append(updatedEntriesWithPoison, ripEntry)
-			}
+		// // send updated entries with poison to srcIP
+		// if FwdTable.IpInterfaces[srcIP].State == link.INTERFACEUP {
+		// 	updatedEntriesWithPoison := make([]RipEntry, 0)
+		// 	for _, ripEntry := range updatedEntries {
+		// 		ripEntry.cost = INFINITY
+		// 		updatedEntriesWithPoison = append(updatedEntriesWithPoison, ripEntry)
+		// 	}
 
-			p = RipPacket{
-				command: CommandResponse,
-				entries: updatedEntriesWithPoison,
-			}
+		// 	p = RipPacket{
+		// 		command: CommandResponse,
+		// 		entries: updatedEntriesWithPoison,
+		// 	}
 
-			packetBytes, err = p.Marshal()
-			if err != nil {
-				log.Println("Unable to marshal response packet that's going to send to srcIP with posion reverse", "\nerror: ", err)
-			} else {
-				err = FwdTable.SendMsgToDestIP(srcIP, RipProtocolNum, packetBytes)
-				if err != nil {
-					log.Println("Error sending fwdTable to srcIP: ", err)
-				}
+		// 	packetBytes, err = p.Marshal()
+		// 	if err != nil {
+		// 		log.Println("Unable to marshal response packet that's going to send to srcIP with posion reverse", "\nerror: ", err)
+		// 	} else {
+		// 		err = FwdTable.SendMsgToDestIP(srcIP, RipProtocolNum, packetBytes)
+		// 		if err != nil {
+		// 			log.Println("Error sending fwdTable to srcIP: ", err)
+		// 		}
+		// 	}
+		// }
+	}
+}
+
+func PeriodicExpiry() {
+	ticker := time.NewTicker(ExpiryInterval)
+
+	for {
+		// wait for ticker to go off
+		<-ticker.C
+		now := time.Now()
+		FwdTable.Lock.Lock()
+		toDelete := make([]string, 0)
+		for destIP, entry := range FwdTable.EntryMap {
+			if (now.Sub(entry.LastUpdatedTime) > EntryStaleAfter) || (entry.Cost >= INFINITY) {
+				toDelete = append(toDelete, destIP)
 			}
 		}
+		for _, destIP := range toDelete {
+			delete(FwdTable.EntryMap, destIP)
+		}
+		FwdTable.Lock.Unlock()
 	}
 }
 
 func PeriodicUpdate() {
+	// 	fmt.Println("---PeriodicUpdate")
 	// keep a last updated variable, if now - then > 12, expire
 	ticker := time.NewTicker(UpdateInterval)
 
@@ -314,10 +345,13 @@ func PeriodicUpdate() {
 
 // TODO
 func RIPInit(fwdTable *network.FwdTable) {
+	// 	fmt.Println("---RIPInit")
 	FwdTable = fwdTable
 	FwdTable.RegisterHandler(RipProtocolNum, RIPHandler)
 	// send our entry table to all neighbors
-	// TODO
+	for destIp := range FwdTable.IpInterfaces {
+		SendRIPResponse(destIp)
+	}
 
 	// request entry table info from all neighbors
 	ripPacket := RipPacket{
@@ -335,4 +369,5 @@ func RIPInit(fwdTable *network.FwdTable) {
 	// add function to remove stale entries from fwdtable perioridically (every 2 seconds or so)
 
 	go PeriodicUpdate()
+	go PeriodicExpiry()
 }

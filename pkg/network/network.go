@@ -52,6 +52,7 @@ type FwdTable struct {
 
 // DONE
 func (ft *FwdTable) Init(links []link.IpInterface, conn transport.Transport) {
+	// 	fmt.Println("---Init")
 	ft.Lock.Lock()
 	defer ft.Lock.Unlock()
 
@@ -70,21 +71,22 @@ func (ft *FwdTable) Init(links []link.IpInterface, conn transport.Transport) {
 }
 
 // DONE
-func (ft *FwdTable) isMyInterface(ip string) bool {
+func (ft *FwdTable) getMyInterface(ip string) (*link.IpInterface, bool) {
 	ft.Lock.RLock()
 	defer ft.Lock.RUnlock()
 
 	for _, inter := range ft.IpInterfaces {
-		if inter.Ip == ip && inter.State == link.INTERFACEUP {
-			return true
+		if inter.Ip == ip {
+			return &inter, true
 		}
 	}
 
-	return false
+	return nil, false
 }
 
 // DONE
 func (ft *FwdTable) GetIpInterface(nextHopIP string) (*link.IpInterface, bool) {
+	// 	fmt.Println("---GetIpInterface")
 	ft.Lock.RLock()
 	defer ft.Lock.RUnlock()
 
@@ -106,6 +108,7 @@ func (ft *FwdTable) RegisterHandler(protocolNum uint8, hf HandlerFunc) {
 
 // -----------------------------------------------------------------------------
 func (ft *FwdTable) SetInterfaceState(id int, newState string) {
+	// 	fmt.Println("---SetInterfaceState")
 	ft.Lock.Lock()
 	defer ft.Lock.Unlock()
 
@@ -141,6 +144,7 @@ func ValidateChecksum(b []byte, fromHeader uint16) uint16 {
 }
 
 func (ft *FwdTable) SendMsgToDestIP(destIP string, procotol int, msg []byte) (err error) {
+	// 	fmt.Println("---SendMsgToDestIP")
 	ft.Lock.RLock()
 	defer ft.Lock.RUnlock()
 
@@ -196,6 +200,7 @@ func (ft *FwdTable) SendMsgToDestIP(destIP string, procotol int, msg []byte) (er
 }
 
 func (ft *FwdTable) HandlePacket(buffer []byte) (err error) {
+	// 	fmt.Println("---HandlePacket")
 	// Verify Checksum
 	hdr, err := ipv4.ParseHeader(buffer)
 	if err != nil {
@@ -216,22 +221,24 @@ func (ft *FwdTable) HandlePacket(buffer []byte) (err error) {
 	destIP := hdr.Dst.String()
 	msgBytes := buffer[hdr.Len:hdr.TotalLen]
 
-	ft.Lock.RLock()
-	defer ft.Lock.RUnlock()
-
-	if ft.isMyInterface(destIP) {
+	myInterface, ok := ft.getMyInterface(destIP)
+	if ok {
+		if myInterface.State == link.INTERFACEDOWN {
+			return
+		}
 		// we are the destination, call the handler for the appropriate application
 		handler, ok := ft.applications[uint8(hdr.Protocol)]
 		if !ok {
 			log.Println("Invalid protocol number in HandlePacket")
 			return errors.New("invalid protocol number in IP header")
 		}
-		ft.Lock.RUnlock()
 		handler(msgBytes, []interface{}{hdr})
 	} else {
 		// not the destination, forward to next hop
 		// what do we do if we don't know a next hop for this destination???
+		ft.Lock.RLock()
 		nextHopEntry, ok := ft.EntryMap[destIP]
+		ft.Lock.RUnlock()
 		if !ok {
 			log.Println("Don't know how to get to this destination: ", destIP)
 			return errors.New("don't have a next hop for this destination")
@@ -257,9 +264,13 @@ func (ft *FwdTable) HandlePacket(buffer []byte) (err error) {
 			return errors.New("unable to marshal header")
 		}
 
+		ft.Lock.RLock()
 		nextHopLink, ok := ft.IpInterfaces[nextHopEntry.Next]
+		ft.Lock.RUnlock()
 		if !ok {
-			log.Fatalln("Get ready for a 0 on the project")
+			ft.PrintFwdTableEntries()
+			fmt.Println("*******")
+			link.PrintInterfaces(ft.IpInterfaces)
 		}
 
 		remoteString := fmt.Sprintf("%s:%s", nextHopLink.DestAddr, nextHopLink.DestUdpPort)
@@ -284,6 +295,7 @@ func (ft *FwdTable) getFwdTableEntriesString() *string {
 }
 
 func (ft *FwdTable) PrintFwdTableEntries() {
+	// 	fmt.Println("---PrintFwdTableEntries")
 	entriesStr := ft.getFwdTableEntriesString()
 	fmt.Print(*entriesStr)
 }
