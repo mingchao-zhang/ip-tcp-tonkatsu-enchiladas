@@ -114,13 +114,18 @@ func (ft *FwdTable) SetInterfaceState(id int, newState string) {
 
 	for k, ipInterface := range ft.IpInterfaces {
 		if ipInterface.Id == id {
+			// other side of link
 			destIP := ipInterface.DestIp
 			// ip interface changed
 			if newState != ipInterface.State {
-				if newState == link.INTERFACEUP {
-					// ft.EntryMap[destIP] = CreateFwdTableEntry(destIP, 1, time.Time{})
-				} else {
+				// goes from up to down
+				if newState == link.INTERFACEDOWN {
+					// remove both sides of link from map
 					delete(ft.EntryMap, destIP)
+					delete(ft.EntryMap, ipInterface.Ip)
+				} else if newState == link.INTERFACEUP {
+					ft.EntryMap[ipInterface.Ip] = CreateFwdTableEntry(ipInterface.Ip, 0, time.Now())
+					ft.EntryMap[destIP] = CreateFwdTableEntry(destIP, 1, time.Now())
 				}
 			}
 
