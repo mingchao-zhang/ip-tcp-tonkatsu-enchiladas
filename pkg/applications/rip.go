@@ -8,7 +8,6 @@ import (
 	link "ip/pkg/ipinterface"
 	"ip/pkg/network"
 	"log"
-	"net"
 	"time"
 
 	"golang.org/x/net/ipv4"
@@ -41,9 +40,7 @@ type RipPacket struct {
 }
 
 func (re RipEntry) String() string {
-	ipStruct := make(net.IP, 4)
-	binary.BigEndian.PutUint32(ipStruct, re.destIP)
-	return fmt.Sprintf("cost: %v\tdestination IP: %v\n", re.cost, ipStruct)
+	return fmt.Sprintf("cost: %v\tdestination IP: %v\n", re.cost, link.IntIP(re.destIP))
 }
 
 func (rp RipPacket) String() string {
@@ -141,7 +138,7 @@ func UnmarshalRipPacket(rawMsg []byte) (*RipPacket, error) {
 	return &p, nil
 }
 
-func SendRIPResponse(neighborIP string) error {
+func SendRIPResponse(neighborIP link.IntIP) error {
 	// 	// fmt.Println("---SendRIPResponse")
 	FwdTable.Lock.RLock()
 
@@ -156,14 +153,12 @@ func SendRIPResponse(neighborIP string) error {
 		}
 
 		// not able to convert IP from string to int32 -- check asap
-		ipStruct := net.ParseIP(destIP)
-		destIPUint32 := binary.BigEndian.Uint32(ipStruct.To4())
 
 		// fmt.Printf("HERE IS THE DESTINATION IP int32: 0x%08x\t str: %v\n", destIPUint32, ipStruct.String())
 		re := RipEntry{
 			cost:   cost,
-			destIP: destIPUint32,
-			mask:   fwdEntry.Mask,
+			destIP: uint32(destIP),
+			mask:   uint32(fwdEntry.Mask),
 		}
 		ripEntries = append(ripEntries, re)
 	}
@@ -180,7 +175,10 @@ func SendRIPResponse(neighborIP string) error {
 		return err
 	}
 
-	err = FwdTable.SendMsgToDestIP(neighborIP, RipProtocolNum, packetBytes, true)
+	FwdTable.Lock.RLock()
+	defer FwdTable.Lock.RUnlock()
+
+	err = FwdTable.SendMsgToDestIP(neighborIP, RipProtocolNum, packetBytes)
 	if err != nil {
 		return err
 	}
@@ -198,7 +196,7 @@ func RIPHandler(rawMsg []byte, params []interface{}) {
 		return
 	}
 
-	srcIP := hdr.Src.String()
+	srcIP := link.IntIPFromNetIP(hdr.Src)
 	if ripPacket.command == CommandRequest {
 		err = SendRIPResponse(srcIP)
 		if err != nil {
@@ -212,10 +210,7 @@ func RIPHandler(rawMsg []byte, params []interface{}) {
 		updatedEntries := make([]RipEntry, 0)
 		for _, entry := range ripPacket.entries {
 
-			ipStruct := make(net.IP, 4)
-			binary.BigEndian.PutUint32(ipStruct, entry.destIP)
-
-			destIP := ipStruct.String()
+			destIP := link.IntIP(entry.destIP)
 			currentFwdEntry, ok := FwdTable.EntryMap[destIP]
 
 			// we won't necessarily use this
@@ -271,7 +266,7 @@ func RIPHandler(rawMsg []byte, params []interface{}) {
 					continue
 				}
 
-				err = FwdTable.SendMsgToDestIP(destIP, RipProtocolNum, packetBytes, false)
+				err = FwdTable.SendMsgToDestIP(destIP, RipProtocolNum, packetBytes)
 				if err != nil {
 					log.Println("Error sending fwdTable to neighbors: ", err)
 				}
@@ -312,7 +307,7 @@ func PeriodicExpiry() {
 		<-ticker.C
 		now := time.Now()
 		FwdTable.Lock.RLock()
-		toDelete := make([]string, 0)
+		toDelete := make([]link.IntIP, 0)
 		for destIP, entry := range FwdTable.EntryMap {
 			if (now.Sub(entry.LastUpdatedTime) > EntryStaleAfter) || (entry.Cost >= INFINITY) {
 				toDelete = append(toDelete, destIP)
@@ -334,7 +329,6 @@ func PeriodicUpdate() {
 
 	for {
 		// wait for ticker to go off
-		<-ticker.C
 		// loop through the list of interfaces and send an updated version of the RIP table to each
 		for _, inter := range FwdTable.IpInterfaces {
 			if inter.State == link.INTERFACEUP {
@@ -342,6 +336,7 @@ func PeriodicUpdate() {
 				SendRIPResponse(neighborIP)
 			}
 		}
+		<-ticker.C
 	}
 }
 
@@ -349,7 +344,7 @@ func PeriodicUpdate() {
 func RIPInit(fwdTable *network.FwdTable) {
 	// 	fmt.Println("---RIPInit")
 	FwdTable = fwdTable
-	FwdTable.RegisterHandler(RipProtocolNum, RIPHandler)
+	FwdTable.RegisterHandlerSafe(RipProtocolNum, RIPHandler)
 	// send our entry table to all neighbors
 	for destIp := range FwdTable.IpInterfaces {
 		SendRIPResponse(destIp)
@@ -363,10 +358,13 @@ func RIPInit(fwdTable *network.FwdTable) {
 	if err != nil {
 		log.Fatalln("Unable to marshal request in RIPInit: ", err)
 	}
+	fwdTable.Lock.RLock()
 	for destIp := range FwdTable.IpInterfaces {
 		// create rip packet with command == request, num entries == 0
-		FwdTable.SendMsgToDestIP(destIp, RipProtocolNum, rawBytes, true)
+
+		FwdTable.SendMsgToDestIP(destIp, RipProtocolNum, rawBytes)
 	}
+	fwdTable.Lock.RUnlock()
 
 	// add function to remove stale entries from fwdtable perioridically (every 2 seconds or so)
 
