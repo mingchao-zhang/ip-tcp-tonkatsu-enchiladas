@@ -1,0 +1,10 @@
+refactoring:
+convert all the string keys into int32
+
+map a destination IP to a pointer to an interface (that way we won't have to update things)
+
+take another look at locking
+
+if we retire a fwd table entry -  we need to make sure that we're updating all the necessary data structures
+
+

@@ -41,16 +41,22 @@ func (node *Node) init(linkFileName string) int {
 
 	// parse the rest of file to get an array of ip interfaces
 	linkId := 0
-	var ipInterfaces []link.IpInterface
+	var ipInterfaces []*link.IpInterface
 	for scanner.Scan() {
 		words = strings.Fields(scanner.Text())
-		link := link.IpInterface{
+		udpPort = words[1]
+		udpPortInt, err := strconv.Atoi(udpPort)
+		if err != nil {
+			log.Fatalf("Unable to convert UDP port to uint16: %v", udpPort)
+		}
+
+		link := &link.IpInterface{
 			Id:          linkId,
 			State:       link.INTERFACEUP,
-			DestAddr:    words[0],
-			DestUdpPort: words[1],
-			Ip:          words[2],
-			DestIp:      words[3]}
+			DestAddr:    link.IntIPFromString(words[0]),
+			DestUdpPort: uint16(udpPortInt),
+			Ip:          link.IntIPFromString(words[2]),
+			DestIp:      link.IntIPFromString(words[3])}
 		ipInterfaces = append(ipInterfaces, link)
 		linkId += 1
 	}
@@ -61,7 +67,8 @@ func (node *Node) init(linkFileName string) int {
 	}
 
 	// initialize FwdTable with ip interfaces
-	node.FwdTable.Init(ipInterfaces, node.Conn)
+	// Safe because it does locking for us
+	node.FwdTable.InitSafe(ipInterfaces, node.Conn)
 
 	// register handlers
 	app.TestProtocolInit(&node.FwdTable)
@@ -77,6 +84,7 @@ func handleCli(text string, node *Node) {
 		node.close()
 		os.Exit(0)
 	} else if words[0] == "interfaces" || words[0] == "li" {
+		// we have to lock because we are reading from shared data
 		node.FwdTable.Lock.RLock()
 		defer node.FwdTable.Lock.RUnlock()
 		if len(words) == 1 {
@@ -85,18 +93,19 @@ func handleCli(text string, node *Node) {
 			link.PrintInterfacesToFile(node.FwdTable.IpInterfaces, words[1])
 		}
 	} else if words[0] == "routes" || words[0] == "lr" {
+		fmt.Println("lr")
 		if len(words) == 1 {
-			node.FwdTable.PrintFwdTableEntries()
+			node.FwdTable.PrintFwdTableEntriesSafe()
 		} else if len(words) == 2 {
-			node.FwdTable.PrintFwdTableEntriesToFile(words[1])
+			node.FwdTable.PrintFwdTableEntriesToFileSafe(words[1])
 		}
-	} else if words[0] == link.INTERFACEUP || words[0] == link.INTERFACEDOWN {
+	} else if words[0] == link.INTERFACEUP.String() || words[0] == link.INTERFACEDOWN.String() {
 		if len(words) == 2 {
 			interfaceId, err := strconv.Atoi(words[1])
 			if err != nil {
 				log.Printf("Invalid interface id: %s", words[1])
 			} else {
-				node.FwdTable.SetInterfaceState(interfaceId, words[0])
+				node.FwdTable.SetInterfaceStateSafe(interfaceId, link.InterfaceStateFromString(words[0]))
 			}
 		}
 	} else if words[0] == "send" && len(words) >= 4 {
@@ -107,7 +116,13 @@ func handleCli(text string, node *Node) {
 			log.Println("Error converting protocol number: ", err)
 			return
 		}
-		go node.FwdTable.SendMsgToDestIP(words[1], protocolNum, []byte(msg))
+
+		node.FwdTable.Lock.RLock()
+		defer node.FwdTable.Lock.RLock()
+		err = node.FwdTable.SendMsgToDestIP(link.IntIPFromString(words[1]), protocolNum, []byte(msg))
+		if err != nil {
+			log.Printf("Error: %v\nUnable to send message \"%v\" to %v\n", err, msg, words[1])
+		}
 	} else {
 		fmt.Println("Unsupported command")
 	}
@@ -144,7 +159,7 @@ func main() {
 		case text := <-keyboardChan:
 			handleCli(text, &node)
 		case buffer := <-listenChan:
-			go node.FwdTable.HandlePacket(buffer)
+			go node.FwdTable.HandlePacketSafe(buffer)
 		}
 	}
 }

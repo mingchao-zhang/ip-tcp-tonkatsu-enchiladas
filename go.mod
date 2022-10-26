@@ -9,5 +9,7 @@ require (
 
 require (
 	github.com/google/btree v1.1.2 // indirect
+	github.com/petermattis/goid v0.0.0-20180202154549-b0b1615b78e5 // indirect
+	github.com/sasha-s/go-deadlock v0.3.1 // indirect
 	golang.org/x/sys v0.0.0-20220728004956-3c1f35247d10 // indirect
 )
