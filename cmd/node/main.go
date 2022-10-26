@@ -93,7 +93,6 @@ func handleCli(text string, node *Node) {
 			link.PrintInterfacesToFile(node.FwdTable.IpInterfaces, words[1])
 		}
 	} else if words[0] == "routes" || words[0] == "lr" {
-		fmt.Println("lr")
 		if len(words) == 1 {
 			node.FwdTable.PrintFwdTableEntriesSafe()
 		} else if len(words) == 2 {
@@ -118,7 +117,7 @@ func handleCli(text string, node *Node) {
 		}
 
 		node.FwdTable.Lock.RLock()
-		defer node.FwdTable.Lock.RLock()
+		defer node.FwdTable.Lock.RUnlock()
 		err = node.FwdTable.SendMsgToDestIP(link.IntIPFromString(words[1]), protocolNum, []byte(msg))
 		if err != nil {
 			log.Printf("Error: %v\nUnable to send message \"%v\" to %v\n", err, msg, words[1])
