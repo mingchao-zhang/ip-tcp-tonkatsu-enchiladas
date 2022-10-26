@@ -242,7 +242,7 @@ func (ft *FwdTable) HandlePacketSafe(buffer []byte) (err error) {
 		ft.Lock.RLock()
 		nextHopEntry, ok := ft.EntryMap[destIP]
 		if !ok {
-			log.Println("Don't know how to get to this destination: ", destIP)
+			// log.Println("Don't know how to get to this destination: ", destIP)
 			ft.Lock.RUnlock()
 			return errors.New("don't have a next hop for this destination")
 		}
