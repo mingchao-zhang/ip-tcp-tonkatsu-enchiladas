@@ -10,6 +10,7 @@ import (
 	"ip/pkg/transport"
 	"log"
 	"os"
+	"sort"
 	"time"
 
 	"sync"
@@ -112,14 +113,12 @@ func (ft *FwdTable) SetInterfaceStateSafe(id int, newState link.InterfaceState) 
 
 	for k, ipInterface := range ft.IpInterfaces {
 		if ipInterface.Id == id {
-			// other side of link
-			destIP := ipInterface.DestIp
 			// ip interface changed
 			if newState != ipInterface.State {
 				// goes from up to down
 				if newState == link.INTERFACEDOWN {
 					// remove both sides of link from map
-					delete(ft.EntryMap, destIP)
+					delete(ft.EntryMap, ipInterface.DestIp)
 					delete(ft.EntryMap, ipInterface.Ip)
 				} else if newState == link.INTERFACEUP {
 					ft.EntryMap[ipInterface.Ip] = CreateFwdTableEntry(ipInterface.Ip, 0, time.Now().Add(time.Hour*48))
@@ -289,8 +288,15 @@ func (ft *FwdTable) HandlePacketSafe(buffer []byte) (err error) {
 
 // -----------------------------------------------------------------------------
 func (ft *FwdTable) getFwdTableEntriesString() *string {
+	var destIPs []link.IntIP
+	for k := range ft.EntryMap {
+		destIPs = append(destIPs, k)
+	}
+	sort.Slice(destIPs, func(i, j int) bool { return destIPs[i] < destIPs[j] })
+
 	res := "dest               next       cost\n"
-	for destIP, fwdEntry := range ft.EntryMap {
+	for _, destIP := range destIPs {
+		fwdEntry := ft.EntryMap[destIP]
 		res += fmt.Sprintf("%s     %s    %d\n", destIP, fwdEntry.Next, fwdEntry.Cost)
 	}
 	return &res
