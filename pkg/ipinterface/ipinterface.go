@@ -1,35 +1,78 @@
 package ipinterface
 
 import (
+	"encoding/binary"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"sort"
 )
 
 const (
-	INTERFACEUP   = "up"
-	INTERFACEDOWN = "down"
+	INTERFACEUP   InterfaceState = true
+	INTERFACEDOWN InterfaceState = false
 )
 
-type IpInterface struct {
-	Id          int
-	State       string
-	DestAddr    string
-	DestUdpPort string
+type IntIP uint32
 
-	Ip     string
-	DestIp string
+func (ip IntIP) NetIP() net.IP {
+	ipStruct := make(net.IP, 4)
+	binary.BigEndian.PutUint32(ipStruct, uint32(ip))
+	return ipStruct
 }
 
-func (inter *IpInterface) SetState(newState string) {
-	if newState == INTERFACEUP || newState == INTERFACEDOWN {
-		inter.State = newState
+func IntIPFromNetIP(ip net.IP) IntIP {
+	return IntIP(binary.BigEndian.Uint32(ip.To4()))
+}
+
+func (ip IntIP) String() string {
+	// convert to IP struct and use its string method
+	return ip.NetIP().String()
+}
+
+func IntIPFromString(ip string) IntIP {
+	if ip == "localhost" {
+		ip = "127.0.0.1"
+	}
+	ipStruct := net.ParseIP(ip)
+	return IntIPFromNetIP(ipStruct)
+}
+
+type InterfaceState bool
+
+func (i InterfaceState) String() string {
+	if i {
+		return "up"
+	} else {
+		return "down"
 	}
 }
 
-func interfaceMapToSortedArray(interfaceMap map[string]IpInterface) []IpInterface {
-	var arr []IpInterface
+func InterfaceStateFromString(state string) InterfaceState {
+	if state == INTERFACEDOWN.String() {
+		return INTERFACEDOWN
+	} else {
+		return INTERFACEUP
+	}
+}
+
+type IpInterface struct {
+	Id          int
+	State       InterfaceState
+	DestAddr    IntIP
+	DestUdpPort uint16
+
+	Ip     IntIP
+	DestIp IntIP
+}
+
+func (inter *IpInterface) SetState(newState bool) {
+	inter.State = InterfaceState(newState)
+}
+
+func interfaceMapToSortedArray(interfaceMap map[IntIP]*IpInterface) []*IpInterface {
+	var arr []*IpInterface
 	for _, v := range interfaceMap {
 		arr = append(arr, v)
 	}
@@ -40,27 +83,27 @@ func interfaceMapToSortedArray(interfaceMap map[string]IpInterface) []IpInterfac
 	return arr
 }
 
-func getInterfacesString(interfaceMap map[string]IpInterface) *string {
+func getInterfacesString(interfaceMap map[IntIP]*IpInterface) string {
 	interfaceArr := interfaceMapToSortedArray(interfaceMap)
 
-	res := "id  state    local          remote        port\n"
+	res := "id\tstate\tlocal\tremote\tport\n"
 	for _, link := range interfaceArr {
-		res += fmt.Sprintf("%d    %s      %s    %s   %s\n", link.Id, link.State, link.Ip, link.DestIp, link.DestUdpPort)
+		res += fmt.Sprintf("%v\t%v\t%v\t%v\t%v\n", link.Id, link.State, link.Ip, link.DestIp, link.DestUdpPort)
 	}
-	return &res
+	return res
 }
 
-func PrintInterfaces(interfaceMap map[string]IpInterface) {
+func PrintInterfaces(interfaceMap map[IntIP]*IpInterface) {
 	str := getInterfacesString(interfaceMap)
-	fmt.Print(*str)
+	fmt.Print(str)
 }
 
-func PrintInterfacesToFile(interfaceMap map[string]IpInterface, filename string) {
+func PrintInterfacesToFile(interfaceMap map[IntIP]*IpInterface, filename string) {
 	file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0755)
 	if err != nil {
 		log.Fatalln("Error opening the file: ", err)
 	}
 	str := getInterfacesString(interfaceMap)
-	file.Write([]byte(*str))
+	file.Write([]byte(str))
 	file.Close()
 }

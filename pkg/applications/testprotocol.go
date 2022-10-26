@@ -23,5 +23,5 @@ func TestProtocolHandler(rawMsg []byte, params []interface{}) {
 }
 
 func TestProtocolInit(fwdTable *network.FwdTable) {
-	fwdTable.RegisterHandler(TestProtocolNum, TestProtocolHandler)
+	fwdTable.RegisterHandlerSafe(TestProtocolNum, TestProtocolHandler)
 }
