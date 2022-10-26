@@ -93,7 +93,6 @@ func handleCli(text string, node *Node) {
 			link.PrintInterfacesToFile(node.FwdTable.IpInterfaces, words[1])
 		}
 	} else if words[0] == "routes" || words[0] == "lr" {
-		fmt.Println("lr")
 		if len(words) == 1 {
 			node.FwdTable.PrintFwdTableEntriesSafe()
 		} else if len(words) == 2 {
