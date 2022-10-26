@@ -56,7 +56,6 @@ func (rp RipPacket) String() string {
 }
 
 // -----------------------------------------------------------------------------
-// DONE
 func (p *RipPacket) Marshal() ([]byte, error) {
 	buff := new(bytes.Buffer)
 
@@ -90,7 +89,6 @@ func (p *RipPacket) Marshal() ([]byte, error) {
 	return buff.Bytes(), nil
 }
 
-// DONE
 func UnmarshalRipPacket(rawMsg []byte) (*RipPacket, error) {
 	// are there enough bytes for the header?
 	// are the remaining bytes a multiple of the size of an entry?
@@ -140,8 +138,6 @@ func UnmarshalRipPacket(rawMsg []byte) (*RipPacket, error) {
 
 // unsafe pls lock the fwdtable
 func SendRIPResponse(neighborIP link.IntIP) error {
-	// 	// fmt.Println("---SendRIPResponse")
-
 	var ripEntries []RipEntry
 
 	for destIP, fwdEntry := range FwdTable.EntryMap {
@@ -152,9 +148,6 @@ func SendRIPResponse(neighborIP link.IntIP) error {
 			cost = INFINITY
 		}
 
-		// not able to convert IP from string to int32 -- check asap
-
-		// fmt.Printf("HERE IS THE DESTINATION IP int32: 0x%08x\t str: %v\n", destIPUint32, ipStruct.String())
 		re := RipEntry{
 			cost:   cost,
 			destIP: uint32(destIP),
@@ -183,11 +176,9 @@ func SendRIPResponse(neighborIP link.IntIP) error {
 }
 
 func RIPHandler(rawMsg []byte, params []interface{}) {
-	// 	fmt.Println("---RIPHandler")
 	hdr := params[0].(*ipv4.Header)
 	ripPacket, err := UnmarshalRipPacket(rawMsg)
 	if err != nil {
-		// not sure what to do if rip packet was invalid
 		log.Fatalln("Error in unmarshalling rip packet: ", err)
 		return
 	}
@@ -316,7 +307,6 @@ func PeriodicExpiry() {
 }
 
 func PeriodicUpdate() {
-	// 	fmt.Println("---PeriodicUpdate")
 	// keep a last updated variable, if now - then > 12, expire
 	ticker := time.NewTicker(UpdateInterval)
 
@@ -338,9 +328,7 @@ func PeriodicUpdate() {
 	}
 }
 
-// TODO
 func RIPInit(fwdTable *network.FwdTable) {
-	// 	fmt.Println("---RIPInit")
 	FwdTable = fwdTable
 	FwdTable.RegisterHandlerSafe(RipProtocolNum, RIPHandler)
 

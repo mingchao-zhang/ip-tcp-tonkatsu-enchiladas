@@ -54,5 +54,4 @@ func (t *Transport) Send(remoteString string, msg []byte) {
 		fmt.Println("transport.send: ", msg)
 		log.Panicln("Error writing to socket: ", err)
 	}
-	// fmt.Printf("%d bytes are written to the address: %s\n", bytesWritten, remoteString)
 }
