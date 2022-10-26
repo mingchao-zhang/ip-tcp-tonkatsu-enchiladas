@@ -336,7 +336,13 @@ func PeriodicUpdate() {
 		// wait for ticker to go off
 		<-ticker.C
 		// loop through the list of interfaces and send an updated version of the RIP table to each
-		for _, inter := range FwdTable.IpInterfaces {
+		ipInterfacesCopy := make(map[string]link.IpInterface)
+		FwdTable.Lock.RLock()
+		for k, v := range FwdTable.IpInterfaces {
+			ipInterfacesCopy[k] = v
+		}
+		FwdTable.Lock.RUnlock()
+		for _, inter := range ipInterfacesCopy {
 			if inter.State == link.INTERFACEUP {
 				neighborIP := inter.DestIp
 				SendRIPResponse(neighborIP)
