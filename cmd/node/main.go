@@ -88,9 +88,9 @@ func handleCli(text string, node *Node) {
 		node.FwdTable.Lock.RLock()
 		defer node.FwdTable.Lock.RUnlock()
 		if len(words) == 1 {
-			link.PrintInterfaces(node.FwdTable.IpInterfaces)
+			link.PrintIpInterfaces(node.FwdTable.IpInterfaces)
 		} else if len(words) == 2 {
-			link.PrintInterfacesToFile(node.FwdTable.IpInterfaces, words[1])
+			link.PrintIpInterfacesToFile(node.FwdTable.IpInterfaces, words[1])
 		}
 	} else if words[0] == "routes" || words[0] == "lr" {
 		if len(words) == 1 {

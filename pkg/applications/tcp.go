@@ -37,7 +37,7 @@ type TcpSocket interface{}
 
 type SocketTable map[TcpConn]TcpSocket
 
-func MarshalTCPPacket()
+func MarshalTCPPacket() {}
 
 func ParseTCPHeader(b []byte) header.TCPFields {
 	td := header.TCP(b)
