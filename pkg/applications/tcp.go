@@ -37,7 +37,13 @@ type TcpSocket interface{}
 
 type SocketTable map[TcpConn]TcpSocket
 
-func MarshalTCPPacket() {}
+func (p *TcpPacket) MarshalTCPPacket() []byte {
+	tcphdr := header.TCP{}
+	tcphdr.Encode(&p.header)
+
+	// return header appended to data
+	return append([]byte(tcphdr), p.data...)
+}
 
 func ParseTCPHeader(b []byte) header.TCPFields {
 	td := header.TCP(b)
