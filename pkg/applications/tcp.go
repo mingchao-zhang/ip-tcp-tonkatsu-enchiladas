@@ -5,6 +5,7 @@ import (
 	link "ip/pkg/ipinterface"
 	"ip/pkg/network"
 
+	"github.com/armon/circbuf"
 	"github.com/google/netstack/tcpip/header"
 	"golang.org/x/net/ipv4"
 )
@@ -33,7 +34,10 @@ type TcpConn struct {
 
 }
 
-type TcpSocket interface{}
+type TcpSocket struct {
+	readBuffer  circbuf.Buffer
+	writeBuffer circbuf.Buffer
+}
 
 type SocketTable map[TcpConn]TcpSocket
 
