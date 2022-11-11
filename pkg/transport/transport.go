@@ -11,10 +11,11 @@ const (
 )
 
 type Transport struct {
-	conn *net.UDPConn
+	conn       *net.UDPConn
+	listenChan *chan []byte
 }
 
-func (t *Transport) Init(udpPort string) {
+func (t *Transport) Init(udpPort string, listenChan *chan []byte) {
 	// resolve udp4 address
 	listenString := fmt.Sprintf(":%s", udpPort)
 	listenAddr, err := net.ResolveUDPAddr("udp4", listenString)
@@ -26,13 +27,19 @@ func (t *Transport) Init(udpPort string) {
 	if err != nil {
 		log.Fatal("Cannot create the udp connection: ", err)
 	}
+
+	t.listenChan = listenChan
 }
 
 func (t *Transport) Close() {
 	t.conn.Close()
 }
 
-func (t *Transport) Recv(listenChan *chan []byte) {
+func (t *Transport) SendToLocalHost(buffer []byte) {
+	*t.listenChan <- buffer
+}
+
+func (t *Transport) Recv() {
 	for {
 		buffer := make([]byte, MAXMSGSIZE)
 
@@ -40,7 +47,7 @@ func (t *Transport) Recv(listenChan *chan []byte) {
 		if err != nil {
 			log.Panicln("Error reading from the UPD socket: ", err)
 		}
-		*listenChan <- buffer
+		*t.listenChan <- buffer
 	}
 }
 
