@@ -82,7 +82,7 @@ func (ft *FwdTable) SetInterfaceStateSafe(id int, newState link.InterfaceState) 
 }
 
 // only call this function if you have already locked
-func (ft *FwdTable) SendMsgToDestIP(destIP link.IntIP, procotol int, msg []byte) (err error) {
+func (ft *FwdTable) SendMsgToDestIP(destIP link.IntIP, procotol uint8, msg []byte) (err error) {
 	var nextHopInterface *link.IpInterface = nil
 	var ok bool = false
 	var isLocalHost bool = false
@@ -117,7 +117,7 @@ func (ft *FwdTable) SendMsgToDestIP(destIP link.IntIP, procotol int, msg []byte)
 		Flags:    0,
 		FragOff:  0,
 		TTL:      MAX_HOPS,
-		Protocol: procotol,
+		Protocol: int(procotol),
 		Checksum: 0, // Should be 0 until checksum is computed
 		Src:      nextHopInterface.Ip.NetIP(),
 		Dst:      destIP.NetIP(),
