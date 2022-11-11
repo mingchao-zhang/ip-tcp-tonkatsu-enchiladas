@@ -1,4 +1,4 @@
-package applications
+package tcp
 
 import (
 	"fmt"

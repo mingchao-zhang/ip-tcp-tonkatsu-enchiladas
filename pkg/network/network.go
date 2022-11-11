@@ -66,7 +66,7 @@ func (ft *FwdTable) SetInterfaceStateSafe(id int, newState link.InterfaceState) 
 			if newState != ipInterface.State {
 				// goes from up to down
 				if newState == link.INTERFACEDOWN {
-					// remove both sides of link from map
+					// remove both sides of link from the fwd entry map
 					delete(ft.EntryMap, ipInterface.DestIp)
 					delete(ft.EntryMap, ipInterface.Ip)
 				} else if newState == link.INTERFACEUP {
@@ -83,21 +83,29 @@ func (ft *FwdTable) SetInterfaceStateSafe(id int, newState link.InterfaceState) 
 
 // only call this function if you have already locked
 func (ft *FwdTable) SendMsgToDestIP(destIP link.IntIP, procotol int, msg []byte) (err error) {
-	var nextHopInterface *link.IpInterface
-	var ok bool
-	fwdEntry, inFwdEntryMap := ft.EntryMap[destIP]
-	if inFwdEntryMap {
-		nextHopInterface, ok = ft.getInterfaceByDestIp(fwdEntry.Next)
-		if !ok {
-			err = errors.New("cannot find interface even given the next Hop in SendMsgToDestIP: " + fwdEntry.Next.String())
-			return
-		}
-	} else {
+	var nextHopInterface *link.IpInterface = nil
+	var ok bool = false
+	var isLocalHost bool = false
+
+	// check if the destIP is the IP in one of our interfaces
+	nextHopInterface, ok = ft.getInterfaceByIp(destIP)
+	isLocalHost = ok
+
+	// check if the destIP is the destIP in one of our interfaces
+	if !ok {
 		nextHopInterface, ok = ft.getInterfaceByDestIp(destIP)
-		if !ok {
-			err = errors.New("cannot find interface even given the next Hop in SendMsgToDestIP: " + fwdEntry.Next.String())
-			return
+	}
+
+	// check if the destIP is in the fwdTable
+	if !ok {
+		fwdEntry, ok := ft.EntryMap[destIP]
+		if ok {
+			nextHopInterface, _ = ft.getInterfaceByDestIp(fwdEntry.Next)
 		}
+	}
+
+	if !ok {
+		return errors.New("Can't reach the destIP " + destIP.String())
 	}
 
 	hdr := ipv4.Header{
@@ -129,7 +137,11 @@ func (ft *FwdTable) SendMsgToDestIP(destIP link.IntIP, procotol int, msg []byte)
 
 	fullPacket := append(headerBytes, msg...)
 	remoteString := fmt.Sprintf("%v:%v", nextHopInterface.DestAddr.String(), nextHopInterface.DestUdpPort)
-	ft.conn.Send(remoteString, fullPacket)
+	if isLocalHost {
+		ft.conn.SendToLocalHost(fullPacket)
+	} else {
+		ft.conn.Send(remoteString, fullPacket)
+	}
 
 	return nil
 }
@@ -206,7 +218,7 @@ func (ft *FwdTable) HandlePacketSafe(buffer []byte) (err error) {
 		nextHopLink, ok := ft.IpInterfaces[nextHopEntry.Next]
 		ft.Lock.RUnlock()
 		if !ok {
-			fmt.Println("Shouldn't happening: nextHop can't be found in IpInterfaces")
+			fmt.Println("Shouldn't be happening: nextHop can't be found in IpInterfaces")
 		}
 
 		remoteString := fmt.Sprintf("%v:%v", nextHopLink.DestAddr, nextHopLink.DestUdpPort)

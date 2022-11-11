@@ -23,7 +23,7 @@ func (node *Node) close() {
 	node.Conn.Close()
 }
 
-func (node *Node) init(linkFileName string) int {
+func (node *Node) init(linkFileName string, listenChan *chan []byte) int {
 	file, err := os.Open(linkFileName)
 	if err != nil {
 		log.Fatal(err)
@@ -37,7 +37,7 @@ func (node *Node) init(linkFileName string) int {
 	firstLine := scanner.Text()
 	words := strings.Fields(firstLine)
 	_, udpPort := words[0], words[1]
-	node.Conn.Init(udpPort)
+	node.Conn.Init(udpPort, listenChan)
 
 	// parse the rest of file to get an array of ip interfaces
 	linkId := 0
@@ -133,8 +133,9 @@ func main() {
 		os.Exit(1)
 	}
 
+	listenChan := make(chan []byte, 1)
 	var node Node
-	if node.init(os.Args[1]) != 0 {
+	if node.init(os.Args[1], &listenChan) != 0 {
 		os.Exit(1)
 	}
 
@@ -149,8 +150,7 @@ func main() {
 	}()
 
 	// start receiving udp packets
-	listenChan := make(chan []byte)
-	go node.Conn.Recv(&listenChan)
+	go node.Conn.Recv()
 
 	// Watch all channels, act on one when something happens
 	for {
