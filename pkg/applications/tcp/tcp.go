@@ -29,12 +29,11 @@ var state *TcpState
 func TcpHandler(rawMsg []byte, params []interface{}) {
 	ipHdr := params[0].(*ipv4.Header)
 	tcpPacket := UnmarshalTcpPacket(rawMsg)
-	fmt.Println(tcpPacket)
 
 	tcpConn := TcpConn{
 		localIP:     link.IntIPFromNetIP(ipHdr.Dst),
-		foreignIP:   link.IntIPFromNetIP(ipHdr.Src),
 		localPort:   tcpPacket.header.DstPort,
+		foreignIP:   link.IntIPFromNetIP(ipHdr.Src),
 		foreignPort: tcpPacket.header.SrcPort,
 	}
 
@@ -172,7 +171,7 @@ func (l *TcpListener) VAccept() (*TcpConn, error) {
 		}
 
 		select {
-		case p := <-l.ch:
+		case p := <-sock.ch:
 			if (p.header.Flags & header.TCPFlagAck) != 0 {
 				// at this point we have established a connection
 				// check if the appropriate number was acked

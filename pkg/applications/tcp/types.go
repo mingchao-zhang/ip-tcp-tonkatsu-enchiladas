@@ -1,6 +1,7 @@
 package tcp
 
 import (
+	"fmt"
 	link "ip/pkg/ipinterface"
 	"ip/pkg/network"
 	"sync"
@@ -76,4 +77,13 @@ func MakeTcpSocket(state byte) (*TcpSocket, error) {
 		state:       state,
 		initSeqNum:  uint32(initSeqNum),
 	}, nil
+}
+
+func (conn TcpConn) String() string {
+	res := "\n"
+	res += fmt.Sprintf("localIP: %s\n", conn.localIP)
+	res += fmt.Sprintf("localPort: %d\n", conn.localPort)
+	res += fmt.Sprintf("foreignIP: %s\n", conn.foreignIP)
+	res += fmt.Sprintf("foreignIP: %d\n", conn.foreignPort)
+	return res
 }
