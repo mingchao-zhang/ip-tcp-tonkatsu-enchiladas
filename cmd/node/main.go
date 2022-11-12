@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	app "ip/pkg/applications"
+	"ip/pkg/applications/tcp"
 	link "ip/pkg/ipinterface"
 	"ip/pkg/network"
 	"ip/pkg/transport"
@@ -73,6 +74,7 @@ func (node *Node) init(linkFileName string, listenChan *chan []byte) int {
 	// register handlers
 	app.TestProtocolInit(&node.FwdTable)
 	app.RIPInit(&node.FwdTable)
+	tcp.TCPInit(&node.FwdTable)
 	return 0
 }
 
@@ -121,6 +123,34 @@ func handleCli(text string, node *Node) {
 		err = node.FwdTable.SendMsgToDestIP(link.IntIPFromString(words[1]), uint8(protocolNum), []byte(msg))
 		if err != nil {
 			log.Printf("Error: %v\nUnable to send message \"%v\" to %v\n", err, msg, words[1])
+		}
+	} else if words[0] == "a" && len(words) == 2 {
+		port, err := strconv.Atoi(words[1])
+		if err != nil {
+			log.Printf("Invalid TCP port: %s", words[1])
+		}
+		fmt.Printf("opening a new listener port: %d\n", port)
+
+		listener, err := tcp.VListen(uint16(port))
+		if err != nil {
+			log.Println(err)
+		}
+		go func() {
+			for {
+				listener.VAccept()
+			}
+		}()
+	} else if words[0] == "c" && len(words) == 3 {
+		foreignIP := words[1]
+		port, err := strconv.Atoi(words[2])
+		if err != nil {
+			log.Printf("Invalid TCP port: %s", words[1])
+		}
+		fmt.Printf("TCP Connecting to %s: %d\n", foreignIP, port)
+
+		_, err = tcp.VConnect(link.IntIPFromString(foreignIP), uint16(port))
+		if err != nil {
+			log.Println(err)
 		}
 	} else {
 		fmt.Println("Unsupported command")
