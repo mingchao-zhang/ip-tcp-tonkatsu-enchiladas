@@ -36,6 +36,11 @@ func PrintIpInterfacesToFile(interfaceMap map[IntIP]*IpInterface, filename strin
 	file.Close()
 }
 
+func GetSmallestLocalIP(interfaceMap map[IntIP]*IpInterface) IntIP {
+	sortedInterfaceArray := interfaceMapToSortedArray(interfaceMap)
+	return sortedInterfaceArray[0].Ip
+}
+
 // PRIVATE ---------------------------------------------------------------------
 func interfaceMapToSortedArray(interfaceMap map[IntIP]*IpInterface) []*IpInterface {
 	var arr []*IpInterface

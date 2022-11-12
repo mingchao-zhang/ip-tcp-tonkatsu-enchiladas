@@ -5,10 +5,7 @@ import (
 	"fmt"
 	link "ip/pkg/ipinterface"
 	"ip/pkg/network"
-	"net"
 
-	"github.com/alecthomas/units"
-	"github.com/armon/circbuf"
 	"github.com/google/netstack/tcpip/header"
 	"golang.org/x/net/ipv4"
 )
@@ -16,14 +13,15 @@ import (
 const (
 	TcpProtocolNum = uint8(header.TCPProtocolNumber)
 	TcpHeaderLen   = header.TCPMinimumSize
-	BufferSize     = int64(64 * units.KiB)
-	SYN_RECEIVED   = 0
-	SYN_SENT       = 1
-	ESTABLISHED    = 2
-	FIN_WAIT_1     = 3
-	FIN_WAIT_2     = 4
-	CLOSE_WAIT     = 5
-	LAST_ACK       = 6
+	BufferSize     = 1<<16 - 1
+
+	SYN_RECEIVED = 0
+	SYN_SENT     = 1
+	ESTABLISHED  = 2
+	FIN_WAIT_1   = 3
+	FIN_WAIT_2   = 4
+	CLOSE_WAIT   = 5
+	LAST_ACK     = 6
 )
 
 var state *TcpState
@@ -40,10 +38,24 @@ func TcpHandler(rawMsg []byte, params []interface{}) {
 		foreignPort: tcpPacket.header.SrcPort,
 	}
 
-	socket, ok := state.sockets[tcpConn]
-	fmt.Println(ok, socket)
+	if tcpConn.localIP != state.myIP {
+		// we will never make connections from any IP other than myIP
+		fmt.Printf("Packet dropped in TcpHandler: %s is not the IP for this node\n", ipHdr.Dst)
+		return
+	}
 
-	// srcIP := link.IntIPFromNetIP(hdr.Src)
+	socket, ok := state.sockets[tcpConn]
+	if !ok {
+		// check if there is a server listening on that port
+		listener, ok := state.listeners[tcpConn.localPort]
+		if !ok {
+			fmt.Printf("Packet dropped in TcpHandler: port %d is not a listen port.\n", tcpConn.localPort)
+			return
+		}
+		listener.ch <- tcpPacket
+	} else {
+		socket.ch <- tcpPacket
+	}
 }
 
 // VListen is a part of the network API available to applications
@@ -54,118 +66,130 @@ func VListen(port uint16) (*TcpListener, error) {
 
 	_, ok := state.ports[port]
 	if ok {
-		return nil, errors.New("port in use")
+		return nil, errors.New("vlisten: port already in use")
 	}
 
 	// at this point we know that the port is unused
 	state.ports[port] = true
-	state.listeners[port] = true
-
-	return &TcpListener{
+	state.listeners[port] = &TcpListener{
 		ip:   state.myIP,
 		port: port,
 		ch:   make(chan *TcpPacket),
 		stop: make(chan bool),
-	}, nil
+	}
+
+	return state.listeners[port], nil
 }
 
 func (conn *TcpConn) HandleConnection() {
+	state.lock.RLock()
+	sock, ok := state.sockets[*conn]
+	state.lock.RUnlock()
 
+	if !ok {
+		// we should already have a socket open
+		return
+	}
+
+	for {
+		// print every packet that we get
+		p := <-sock.ch
+		fmt.Println(p)
+	}
 }
 
 func (l *TcpListener) VAccept() (*TcpConn, error) {
+	// make sure that the listener is still valid
+
 	select {
 	case p := <-l.ch:
 		// here we need to make sure p is a SYN
-		if p.header.Flags == header.TCPFlagSyn {
-			// we only accept connections if the flag is *just* SYN
-			fmt.Println(p.header.Flags)
-			// at this point we need to check if there is already a connection from this port and IP address?
-			// Question: can we have 2 connections to the same port?
-			// for now I won't check
-
-			// create an entry in the socket table using a random port number
-			// spawn a thread to handle this connection?
-
-			state.lock.Lock()
-
-			conn := TcpConn{
-				localIP:     l.ip,
-				localPort:   l.port,
-				foreignIP:   p.srcIP,
-				foreignPort: p.header.SrcPort,
-			}
-
-			_, ok := state.sockets[conn]
-			if ok {
-				return nil, errors.New("already connected to a client at this port")
-			}
-
-			readBuf, err := circbuf.NewBuffer(BufferSize)
-			if err != nil {
-				return nil, err
-			}
-
-			writeBuf, err := circbuf.NewBuffer(BufferSize)
-			if err != nil {
-				return nil, err
-			}
-
-			sock := &TcpSocket{
-				readBuffer:  readBuf,
-				writeBuffer: writeBuf,
-				recvChan:    make(chan *TcpPacket),
-				state:       SYN_RECEIVED,
-			}
-			state.sockets[conn] = sock
-
-			state.lock.Unlock()
-
-			// first we need to send a syn-ack
-			tcpHdr := header.TCPFields{
-				SrcPort: conn.localPort,
-				DstPort: conn.foreignPort,
-				// ⚠️ ⬇️⬇️⬇️ adjust these values ⬇️⬇️⬇️
-				SeqNum:        1,
-				AckNum:        1,
-				DataOffset:    20,
-				Flags:         header.TCPFlagSyn | header.TCPFlagAck,
-				WindowSize:    65535,
-				Checksum:      0,
-				UrgentPointer: 0,
-			}
-
-			synAckPacket := TcpPacket{
-				header: tcpHdr,
-				data:   make([]byte, 0),
-			}
-
-			packetBytes := synAckPacket.Marshal()
-
-			state.fwdTable.Lock.RLock()
-			err = state.fwdTable.SendMsgToDestIP(p.srcIP, TcpProtocolNum, packetBytes)
-			state.fwdTable.Lock.RUnlock()
-			if err != nil {
-				state.lock.Lock()
-				delete(state.sockets, conn)
-				state.lock.Unlock()
-				return nil, err
-			}
-
-			// at this point we have established a connection
-			select {
-			case p := <-l.ch:
-				if p.header.Flags&header.TCPFlagAck != 0 {
-					fmt.Println("we did it :partyemoji:")
-				}
-			case <-l.stop:
-				return nil, errors.New("connection closed")
-			}
-
-			return &conn, nil
-		} else {
-			return nil, errors.New("invalid flags")
+		if p.header.Flags != header.TCPFlagSyn {
+			errMsg := fmt.Sprintf("Packet dropped in VAccept: the TCP flag must be SYN. Flags received: %d\n", p.header.Flags)
+			return nil, errors.New(errMsg)
 		}
+		// we only accept connections if the flag is *just* SYN
+		// at this point we need to check if there is already a connection from this port and IP address?
+		// Question: can we have 2 connections to the same port?
+		// for now I won't check
+
+		// spawn a thread to handle this connection?
+
+		state.lock.Lock()
+
+		conn := TcpConn{
+			localIP:     l.ip,
+			localPort:   l.port,
+			foreignIP:   p.srcIP,
+			foreignPort: p.header.SrcPort,
+		}
+
+		_, ok := state.sockets[conn]
+		if ok {
+			state.lock.Unlock()
+			errMsg := fmt.Sprintf("Packet dropped in VAccept: %s: %d has already been connected\n", conn.foreignIP, conn.foreignPort)
+			return nil, errors.New(errMsg)
+		}
+
+		sock, err := MakeTcpSocket(SYN_RECEIVED)
+		if err != nil {
+			state.lock.Unlock()
+			return nil, err
+		}
+		state.sockets[conn] = sock
+
+		state.lock.Unlock()
+
+		// first we need to send a syn-ack
+		tcpHdr := header.TCPFields{
+			SrcPort: conn.localPort,
+			DstPort: conn.foreignPort,
+			// ⚠️ ⬇️⬇️⬇️ adjust these values ⬇️⬇️⬇️
+			// seq num becomes a random value
+			SeqNum:     sock.initSeqNum,
+			AckNum:     p.header.SeqNum + 1,
+			DataOffset: TcpHeaderLen,
+			Flags:      header.TCPFlagSyn | header.TCPFlagAck,
+			WindowSize: uint16(BufferSize),
+			// we need to set the checksum
+			Checksum:      0,
+			UrgentPointer: 0,
+		}
+
+		synAckPacket := TcpPacket{
+			header: tcpHdr,
+			data:   make([]byte, 0),
+		}
+
+		packetBytes := synAckPacket.Marshal()
+
+		state.fwdTable.Lock.RLock()
+		err = state.fwdTable.SendMsgToDestIP(conn.foreignIP, TcpProtocolNum, packetBytes)
+		state.fwdTable.Lock.RUnlock()
+		if err != nil {
+			deleteConnSafe(&conn)
+			return nil, err
+		}
+
+		select {
+		case p := <-l.ch:
+			if (p.header.Flags & header.TCPFlagAck) != 0 {
+				// at this point we have established a connection
+				// check if the appropriate number was acked
+				fmt.Println("we did it :partyemoji:")
+			}
+			// TODO: When is data pushed into l.stop?
+			// when the listener calls close(),
+			// removes the listener from listeners
+			// and all the active connections from the socket table
+		case <-l.stop:
+			deleteConnSafe(&conn)
+			return nil, errors.New("connection closed")
+		}
+
+		go conn.HandleConnection()
+
+		return &conn, nil
 	case <-l.stop:
 		return nil, errors.New("connection closed")
 	}
@@ -174,38 +198,120 @@ func (l *TcpListener) VAccept() (*TcpConn, error) {
 
 // TODO
 func (l *TcpListener) VClose() error {
+	// remove the listener from list of listeners
+	// remove all open sockets and send value on close channel
+	// send value on listener close to stop it from waiting on new connections
 	return nil
 }
 
-/*
- * Creates a new socket and connects to an
- * address:port (active OPEN in the RFC).
- * Returns a VTCPConn on success or non-nil error on
- * failure.
- * VConnect MUST block until the connection is
- * established, or an error occurs.
- */
-func VConnect(addr net.IP, port int16) (*TcpConn, error) {
-	// conn := TcpConn {
-	// 	localIP     link.IntIP
-	// 	localPort   uint16
-	// 	foreignIP   link.IntIP
-	// 	foreignPort uint16
-	// }
-	return nil, nil
+func VConnect(foreignIP link.IntIP, foreignPort uint16) (*TcpConn, error) {
+	state.lock.Lock()
+	conn := TcpConn{
+		localIP:     state.myIP,
+		localPort:   allocatePortUnsafe(),
+		foreignIP:   foreignIP,
+		foreignPort: foreignPort,
+	}
+
+	// check if the connection has already been established
+	_, ok := state.sockets[conn]
+	if ok {
+		errMsg := fmt.Sprintf("Error in VConnect: %s: %d has already been connected.\n", conn.foreignIP, conn.foreignPort)
+		state.lock.Unlock()
+		return nil, errors.New(errMsg)
+	}
+
+	// create the TCP socket
+	sock, err := MakeTcpSocket(SYN_SENT)
+	if err != nil {
+		state.lock.Unlock()
+		return nil, err
+	}
+	state.sockets[conn] = sock
+	state.lock.Unlock()
+
+	// send SYN
+	tcpHdr := header.TCPFields{
+		SrcPort:    conn.localPort,
+		DstPort:    conn.foreignPort,
+		SeqNum:     sock.initSeqNum,
+		AckNum:     0,
+		DataOffset: TcpHeaderLen,
+		Flags:      header.TCPFlagSyn,
+		WindowSize: BufferSize,
+		// To compute
+		Checksum:      0,
+		UrgentPointer: 0,
+	}
+	synPacket := TcpPacket{
+		header: tcpHdr,
+		data:   make([]byte, 0),
+	}
+	packetBytes := synPacket.Marshal()
+
+	state.fwdTable.Lock.RLock()
+	err = state.fwdTable.SendMsgToDestIP(foreignIP, TcpProtocolNum, packetBytes)
+	state.fwdTable.Lock.RUnlock()
+	if err != nil {
+		deleteConnSafe(&conn)
+		return nil, err
+	}
+
+	// wait for a SYN-ACK
+	// possibly also wait on stop
+	var packet *TcpPacket
+	select {
+	case packet = <-sock.ch:
+	case <-sock.stop:
+		deleteConnSafe(&conn)
+		return nil, errors.New("connection closed")
+	}
+
+	receivedHdr := packet.header
+
+	// check if the appropriate number was acked
+
+	// send ACK
+	tcpHdr = header.TCPFields{
+		SrcPort:    conn.localPort,
+		DstPort:    conn.foreignPort,
+		SeqNum:     receivedHdr.AckNum,
+		AckNum:     receivedHdr.SeqNum + 1,
+		DataOffset: TcpHeaderLen,
+		Flags:      header.TCPFlagAck,
+		WindowSize: uint16(BufferSize),
+		// To compute
+		Checksum:      0,
+		UrgentPointer: 0,
+	}
+	ackPacket := TcpPacket{
+		header: tcpHdr,
+		data:   make([]byte, 0),
+	}
+	packetBytes = ackPacket.Marshal()
+	state.fwdTable.Lock.RLock()
+	err = state.fwdTable.SendMsgToDestIP(foreignIP, TcpProtocolNum, packetBytes)
+	state.fwdTable.Lock.RUnlock()
+	if err != nil {
+		deleteConnSafe(&conn)
+		return nil, err
+	}
+
+	// conn established
+	go conn.HandleConnection()
+	return &conn, nil
 }
 
 func TCPInit(fwdTable *network.FwdTable) {
 	fwdTable.RegisterHandlerSafe(TcpProtocolNum, TcpHandler)
-	// TODO: initialize myIP
+
 	state = &TcpState{
 		sockets:        make(map[TcpConn]*TcpSocket),
-		listeners:      make(map[uint16]bool),
+		listeners:      make(map[uint16]*TcpListener),
 		ports:          make(map[uint16]bool),
 		fwdTable:       fwdTable,
-		nextUnusedPort: 1000,
-		// ⚠️ ADD IP HERE THIS IS INCOMPLETE
-		myIP: 0000_0000_0000_0000,
+		nextUnusedPort: 2000,
+		myIP:           link.GetSmallestLocalIP(fwdTable.IpInterfaces),
 	}
 }
 
@@ -255,4 +361,10 @@ func allocatePortUnsafe() uint16 {
 	res := state.nextUnusedPort
 	state.nextUnusedPort += 1
 	return res
+}
+
+func deleteConnSafe(conn *TcpConn) {
+	state.lock.Lock()
+	delete(state.sockets, *conn)
+	state.lock.Unlock()
 }

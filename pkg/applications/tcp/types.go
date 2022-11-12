@@ -15,7 +15,7 @@ const (
 
 type TcpState struct {
 	sockets   map[TcpConn]*TcpSocket
-	listeners map[uint16]bool
+	listeners map[uint16]*TcpListener
 	myIP      link.IntIP
 	// ports is a set of all the ports for listening purposes
 	// We will use this to get a random port for connection
@@ -48,6 +48,32 @@ type TcpListener struct {
 type TcpSocket struct {
 	readBuffer  *circbuf.Buffer
 	writeBuffer *circbuf.Buffer
-	recvChan    chan *TcpPacket
+	ch          chan *TcpPacket
+	stop        chan bool
 	state       byte
+	initSeqNum  uint32
+}
+
+func MakeTcpSocket(state byte) (*TcpSocket, error) {
+	readBuf, err := circbuf.NewBuffer(BufferSize)
+	if err != nil {
+		return nil, err
+	}
+
+	writeBuf, err := circbuf.NewBuffer(BufferSize)
+	if err != nil {
+		return nil, err
+	}
+
+	// replace with random later
+	initSeqNum := 0
+
+	return &TcpSocket{
+		readBuffer:  readBuf,
+		writeBuffer: writeBuf,
+		ch:          make(chan *TcpPacket),
+		stop:        make(chan bool),
+		state:       state,
+		initSeqNum:  uint32(initSeqNum),
+	}, nil
 }
