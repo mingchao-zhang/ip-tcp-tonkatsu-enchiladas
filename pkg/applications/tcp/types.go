@@ -9,11 +9,14 @@ import (
 	"github.com/google/netstack/tcpip/header"
 )
 
+const (
+// Add all the TCP states here?
+)
+
 type TcpState struct {
-	sockets    map[TcpConn]TcpSocket
-	listeners  map[uint16]bool
-	nextSocket uint32
-	myIP       link.IntIP
+	sockets   map[TcpConn]*TcpSocket
+	listeners map[uint16]*TcpListener
+	myIP      link.IntIP
 	// ports is a set of all the ports for listening purposes
 	// We will use this to get a random port for connection
 	ports          map[uint16]bool
@@ -23,6 +26,7 @@ type TcpState struct {
 }
 
 type TcpPacket struct {
+	srcIP  link.IntIP
 	header header.TCPFields
 	data   []byte
 }
@@ -38,9 +42,38 @@ type TcpListener struct {
 	ip   link.IntIP
 	port uint16
 	ch   chan *TcpPacket
+	stop chan bool
 }
 
 type TcpSocket struct {
-	readBuffer  circbuf.Buffer
-	writeBuffer circbuf.Buffer
+	readBuffer  *circbuf.Buffer
+	writeBuffer *circbuf.Buffer
+	ch          chan *TcpPacket
+	stop        chan bool
+	state       byte
+	initSeqNum  uint32
+}
+
+func MakeTcpSocket(state byte) (*TcpSocket, error) {
+	readBuf, err := circbuf.NewBuffer(BufferSize)
+	if err != nil {
+		return nil, err
+	}
+
+	writeBuf, err := circbuf.NewBuffer(BufferSize)
+	if err != nil {
+		return nil, err
+	}
+
+	// replace with random later
+	initSeqNum := 0
+
+	return &TcpSocket{
+		readBuffer:  readBuf,
+		writeBuffer: writeBuf,
+		ch:          make(chan *TcpPacket),
+		stop:        make(chan bool),
+		state:       state,
+		initSeqNum:  uint32(initSeqNum),
+	}, nil
 }

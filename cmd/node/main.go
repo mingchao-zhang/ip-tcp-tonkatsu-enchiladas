@@ -118,7 +118,7 @@ func handleCli(text string, node *Node) {
 
 		node.FwdTable.Lock.RLock()
 		defer node.FwdTable.Lock.RUnlock()
-		err = node.FwdTable.SendMsgToDestIP(link.IntIPFromString(words[1]), protocolNum, []byte(msg))
+		err = node.FwdTable.SendMsgToDestIP(link.IntIPFromString(words[1]), uint8(protocolNum), []byte(msg))
 		if err != nil {
 			log.Printf("Error: %v\nUnable to send message \"%v\" to %v\n", err, msg, words[1])
 		}
