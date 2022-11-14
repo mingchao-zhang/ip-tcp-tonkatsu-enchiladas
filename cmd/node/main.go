@@ -129,7 +129,6 @@ func handleCli(text string, node *Node) {
 		if err != nil {
 			log.Printf("Invalid TCP port: %s", words[1])
 		}
-		fmt.Printf("opening a new listener port: %d\n", port)
 
 		listener, err := tcp.VListen(uint16(port))
 		if err != nil {
@@ -186,7 +185,7 @@ func main() {
 	for {
 		select {
 		case text := <-keyboardChan:
-			handleCli(text, &node)
+			go handleCli(text, &node)
 		case buffer := <-listenChan:
 			go node.FwdTable.HandlePacketSafe(buffer)
 		}

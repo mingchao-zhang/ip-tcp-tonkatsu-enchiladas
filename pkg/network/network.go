@@ -9,8 +9,9 @@ import (
 	link "ip/pkg/ipinterface"
 	"ip/pkg/transport"
 	"log"
-	"sync"
 	"time"
+
+	"github.com/sasha-s/go-deadlock"
 
 	"github.com/google/netstack/tcpip/header"
 	"golang.org/x/net/ipv4"
@@ -28,7 +29,7 @@ type FwdTable struct {
 	applications map[uint8]HandlerFunc
 
 	conn transport.Transport
-	Lock sync.RWMutex
+	Lock deadlock.RWMutex
 }
 
 func (ft *FwdTable) InitSafe(links []*link.IpInterface, conn transport.Transport) {

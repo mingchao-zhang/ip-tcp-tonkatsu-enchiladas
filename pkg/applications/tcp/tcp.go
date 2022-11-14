@@ -28,12 +28,13 @@ var state *TcpState
 
 func TcpHandler(rawMsg []byte, params []interface{}) {
 	ipHdr := params[0].(*ipv4.Header)
-	tcpPacket := UnmarshalTcpPacket(rawMsg)
+	srcIP := link.IntIPFromNetIP(ipHdr.Src)
+	tcpPacket := UnmarshalTcpPacket(rawMsg, srcIP)
 
 	tcpConn := TcpConn{
 		localIP:     link.IntIPFromNetIP(ipHdr.Dst),
 		localPort:   tcpPacket.header.DstPort,
-		foreignIP:   link.IntIPFromNetIP(ipHdr.Src),
+		foreignIP:   srcIP,
 		foreignPort: tcpPacket.header.SrcPort,
 	}
 
@@ -60,6 +61,8 @@ func TcpHandler(rawMsg []byte, params []interface{}) {
 // VListen is a part of the network API available to applications
 // Callers do not need to lock
 func VListen(port uint16) (*TcpListener, error) {
+	fmt.Printf("opening a new listener: %v:%d\n", state.myIP, port)
+
 	state.lock.Lock()
 	defer state.lock.Unlock()
 
@@ -258,47 +261,45 @@ func VConnect(foreignIP link.IntIP, foreignPort uint16) (*TcpConn, error) {
 
 	// wait for a SYN-ACK
 	// possibly also wait on stop
-	var packet *TcpPacket
 	select {
-	case packet = <-sock.ch:
+	case packet := <-sock.ch:
+		receivedHdr := packet.header
+		// check if the appropriate number was acked
+
+		// send ACK
+		tcpHdr = header.TCPFields{
+			SrcPort:    conn.localPort,
+			DstPort:    conn.foreignPort,
+			SeqNum:     receivedHdr.AckNum,
+			AckNum:     receivedHdr.SeqNum + 1,
+			DataOffset: TcpHeaderLen,
+			Flags:      header.TCPFlagAck,
+			WindowSize: uint16(BufferSize),
+			// To compute
+			Checksum:      0,
+			UrgentPointer: 0,
+		}
+		ackPacket := TcpPacket{
+			header: tcpHdr,
+			data:   make([]byte, 0),
+		}
+		packetBytes = ackPacket.Marshal()
+		state.fwdTable.Lock.RLock()
+		err = state.fwdTable.SendMsgToDestIP(foreignIP, TcpProtocolNum, packetBytes)
+		state.fwdTable.Lock.RUnlock()
+		if err != nil {
+			deleteConnSafe(&conn)
+			return nil, err
+		}
+
+		// conn established
+		go conn.HandleConnection()
+		return &conn, nil
 	case <-sock.stop:
 		deleteConnSafe(&conn)
 		return nil, errors.New("connection closed")
 	}
 
-	receivedHdr := packet.header
-
-	// check if the appropriate number was acked
-
-	// send ACK
-	tcpHdr = header.TCPFields{
-		SrcPort:    conn.localPort,
-		DstPort:    conn.foreignPort,
-		SeqNum:     receivedHdr.AckNum,
-		AckNum:     receivedHdr.SeqNum + 1,
-		DataOffset: TcpHeaderLen,
-		Flags:      header.TCPFlagAck,
-		WindowSize: uint16(BufferSize),
-		// To compute
-		Checksum:      0,
-		UrgentPointer: 0,
-	}
-	ackPacket := TcpPacket{
-		header: tcpHdr,
-		data:   make([]byte, 0),
-	}
-	packetBytes = ackPacket.Marshal()
-	state.fwdTable.Lock.RLock()
-	err = state.fwdTable.SendMsgToDestIP(foreignIP, TcpProtocolNum, packetBytes)
-	state.fwdTable.Lock.RUnlock()
-	if err != nil {
-		deleteConnSafe(&conn)
-		return nil, err
-	}
-
-	// conn established
-	go conn.HandleConnection()
-	return &conn, nil
 }
 
 func TCPInit(fwdTable *network.FwdTable) {
@@ -329,11 +330,12 @@ func ParseTCPHeader(b []byte) header.TCPFields {
 	}
 }
 
-func UnmarshalTcpPacket(rawMsg []byte) *TcpPacket {
+func UnmarshalTcpPacket(rawMsg []byte, srcIP link.IntIP) *TcpPacket {
 	tcpHeader := ParseTCPHeader(rawMsg)
 	tcpPacket := TcpPacket{
 		header: tcpHeader,
 		data:   rawMsg[tcpHeader.DataOffset:],
+		srcIP:  srcIP,
 	}
 
 	return &tcpPacket
