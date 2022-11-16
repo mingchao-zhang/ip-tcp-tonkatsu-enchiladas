@@ -80,22 +80,12 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 
 	// if sequence number of the packet is the same as what we expect
 	// we will add it to the read buffer and update the next field
-	
-	if p.header.SeqNum == 
+
+	// if p.header.SeqNum ==
 
 }
 
-func (conn *TcpConn) HandleConnection() {
-	state.lock.RLock()
-	sock, ok := state.sockets[*conn]
-	state.lock.RUnlock()
-
-	// packetsSeen := make(map[uint32]string)
-
-	if !ok {
-		// we should already have a socket open
-		return
-	}
+func (sock *TcpSocket) HandleConnection() {
 
 	for {
 		p := <-sock.ch

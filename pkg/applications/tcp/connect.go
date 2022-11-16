@@ -98,7 +98,7 @@ func VConnect(foreignIP link.IntIP, foreignPort uint16) (*TcpConn, error) {
 		}
 
 		// conn established
-		go conn.HandleConnection()
+		go sock.HandleConnection()
 		return &conn, nil
 	case <-sock.stop:
 		deleteConnSafe(&conn)
