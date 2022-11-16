@@ -49,13 +49,15 @@ func (l *TcpListener) VAccept() (*TcpConn, error) {
 
 		state.lock.Unlock()
 
+		sock.foreignInitSeqNum = p.header.SeqNum
+
 		// first we need to send a syn-ack
 		tcpHdr := header.TCPFields{
 			SrcPort: conn.localPort,
 			DstPort: conn.foreignPort,
 			// ⚠️ ⬇️⬇️⬇️ adjust these values ⬇️⬇️⬇️
 			// seq num becomes a random value
-			SeqNum:     sock.initSeqNum,
+			SeqNum:     sock.myInitSeqNum,
 			AckNum:     p.header.SeqNum + 1,
 			DataOffset: TcpHeaderLen,
 			Flags:      header.TCPFlagSyn | header.TCPFlagAck,

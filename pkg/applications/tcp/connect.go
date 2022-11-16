@@ -26,7 +26,7 @@ func VConnect(foreignIP link.IntIP, foreignPort uint16) (*TcpConn, error) {
 	}
 
 	// create the TCP socket
-	sock, err := MakeTcpSocket(SYN_SENT)
+	sock, err := MakeTcpSocket(SYN_SENT, 0)
 	if err != nil {
 		state.lock.Unlock()
 		return nil, err
@@ -38,7 +38,7 @@ func VConnect(foreignIP link.IntIP, foreignPort uint16) (*TcpConn, error) {
 	tcpHdr := header.TCPFields{
 		SrcPort:    conn.localPort,
 		DstPort:    conn.foreignPort,
-		SeqNum:     sock.initSeqNum,
+		SeqNum:     sock.myInitSeqNum,
 		AckNum:     0,
 		DataOffset: TcpHeaderLen,
 		Flags:      header.TCPFlagSyn,
@@ -67,7 +67,10 @@ func VConnect(foreignIP link.IntIP, foreignPort uint16) (*TcpConn, error) {
 	case packet := <-sock.ch:
 		receivedHdr := packet.header
 		// check if the appropriate number was acked
-
+		if (receivedHdr.Flags&header.TCPFlagSyn == 0) || (receivedHdr.Flags&header.TCPFlagAck == 0) {
+			deleteConnSafe(&conn)
+			return nil, errors.New("received packet with wrong flags during handshake")
+		}
 		// send ACK
 		tcpHdr = header.TCPFields{
 			SrcPort:    conn.localPort,

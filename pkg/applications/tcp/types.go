@@ -5,13 +5,14 @@ import (
 	link "ip/pkg/ipinterface"
 	"ip/pkg/network"
 	"sync"
+	"time"
 
 	"github.com/google/netstack/tcpip/header"
-	"github.com/smallnest/ringbuffer"
 )
 
 const (
-// Add all the TCP states here?
+	// Add all the TCP states here?
+	READ_WRITE_SLEEP_TIME = time.Millisecond * 10
 )
 
 type TcpState struct {
@@ -32,13 +33,6 @@ type TcpPacket struct {
 	data   []byte
 }
 
-type TcpConn struct {
-	localIP     link.IntIP
-	localPort   uint16
-	foreignIP   link.IntIP
-	foreignPort uint16
-}
-
 type TcpListener struct {
 	ip   link.IntIP
 	port uint16
@@ -46,27 +40,11 @@ type TcpListener struct {
 	stop chan bool
 }
 
-type TcpSocket struct {
-	readBuffer  *ringbuffer.RingBuffer
-	writeBuffer *ringbuffer.RingBuffer
-	ch          chan *TcpPacket
-	stop        chan bool
-	state       byte
-	initSeqNum  uint32
-}
-
-func MakeTcpSocket(state byte) (*TcpSocket, error) {
-	// replace with random later
-	initSeqNum := 0
-
-	return &TcpSocket{
-		readBuffer:  ringbuffer.New(BufferSize),
-		writeBuffer: ringbuffer.New(BufferSize),
-		ch:          make(chan *TcpPacket),
-		stop:        make(chan bool),
-		state:       state,
-		initSeqNum:  uint32(initSeqNum),
-	}, nil
+type TcpConn struct {
+	localIP     link.IntIP
+	localPort   uint16
+	foreignIP   link.IntIP
+	foreignPort uint16
 }
 
 func (conn TcpConn) String() string {

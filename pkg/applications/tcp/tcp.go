@@ -57,9 +57,11 @@ func TcpHandler(rawMsg []byte, params []interface{}) {
 	}
 }
 
-func (conn *TcpConn) HandlePacket(p *TcpPacket) {
+func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 	// makes sense of the packet
 	// if the packet is an ack, then we have to update our write buffer
+
+	// how do we know if it is an ack or a data packet?
 
 	// if p.header.Flags & header.TCPFlagAck != 0 {
 	// 	// we got an ACK
@@ -69,6 +71,18 @@ func (conn *TcpConn) HandlePacket(p *TcpPacket) {
 
 	// }
 
+	// if we get a packet we check if it is the next packet we were expecting to get
+	// if it is not then we add it to the out of order queue
+	// else if it was the next then we update the value of the next packet we expect to see
+	// 		and send an ack with that next value
+
+	// if
+
+	// if sequence number of the packet is the same as what we expect
+	// we will add it to the read buffer and update the next field
+	
+	if p.header.SeqNum == 
+
 }
 
 func (conn *TcpConn) HandleConnection() {
@@ -76,7 +90,7 @@ func (conn *TcpConn) HandleConnection() {
 	sock, ok := state.sockets[*conn]
 	state.lock.RUnlock()
 
-	packetsSeen := make(map[uint32]string)
+	// packetsSeen := make(map[uint32]string)
 
 	if !ok {
 		// we should already have a socket open
@@ -84,16 +98,9 @@ func (conn *TcpConn) HandleConnection() {
 	}
 
 	for {
-		// print every packet that we get
 		p := <-sock.ch
 
-		_, seen := packetsSeen[p.header.AckNum]
-		if !seen {
-			packetsSeen[p.header.AckNum] = string(p.data)
-			sock.readBuffer.Write(p.data)
-		}
-
-		go conn.HandlePacket(p)
+		go sock.HandlePacket(p)
 	}
 
 	// have a thread waiting for data in the write buffer,

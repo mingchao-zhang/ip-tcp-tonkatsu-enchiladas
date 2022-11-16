@@ -5,27 +5,21 @@ import (
 	"time"
 )
 
-// var bufferSizeLeft = BufferSize
-
 func (conn *TcpConn) VRead(buff []byte) (int, error) {
-	// validate TCP checksum
-	// TODO
+	// TODO: validate TCP checksum
 
 	// we need to write len(buff) bytes from the read buffer to buff
-
-	bytesToRead := len(buff)
 	state.lock.RLock()
 	sock := state.sockets[*conn]
 	state.lock.RUnlock()
-
 	readBuffer := sock.readBuffer
 
 	var totalBytesRead = 0
 
-	for totalBytesRead < bytesToRead {
+	for totalBytesRead < len(buff) {
 		// we wait until there are more bytes to read
 		if readBuffer.IsEmpty() {
-			time.Sleep(time.Millisecond * 10)
+			time.Sleep(READ_WRITE_SLEEP_TIME)
 		} else {
 			bytesRead, err := readBuffer.Read(buff[totalBytesRead:])
 			if err != nil {
@@ -36,7 +30,7 @@ func (conn *TcpConn) VRead(buff []byte) (int, error) {
 		}
 	}
 
-	if totalBytesRead != bytesToRead {
+	if totalBytesRead != len(buff) {
 		log.Fatalln("VRead read too many bytes 💀")
 	}
 
