@@ -40,7 +40,7 @@ func (l *TcpListener) VAccept() (*TcpConn, error) {
 			return nil, errors.New(errMsg)
 		}
 
-		sock, err := MakeTcpSocket(SYN_RECEIVED, p.header.SeqNum)
+		sock, err := MakeTcpSocket(SYN_RECEIVED, &conn, p.header.SeqNum)
 		if err != nil {
 			state.lock.Unlock()
 			return nil, err

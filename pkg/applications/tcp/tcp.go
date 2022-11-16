@@ -4,6 +4,7 @@ import (
 	"fmt"
 	link "ip/pkg/ipinterface"
 	"ip/pkg/network"
+	"log"
 	"math/rand"
 	"time"
 
@@ -84,10 +85,10 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 	// we will add it to the read buffer and update the next field
 
 	// if p.header.SeqNum ==
+	// convert from RAW to RELATIVE
+	relSeqNum := p.header.SeqNum - sock.foreignInitSeqNum
 
-	absSeqNum := p.header.SeqNum - sock.foreignInitSeqNum
-
-	if absSeqNum == sock.nextExpectedByte.Load() {
+	if relSeqNum == sock.nextExpectedByte.Load() {
 		if sock.readBuffer.Free() >= len(p.data) {
 			// write the data to the buffer if there is enough space available
 			sock.readBuffer.Write(p.data)
@@ -98,7 +99,25 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 		// }
 	} else {
 		// add the packet to the heap of packets
-		sock.outOfOrderQueue.Push(p)
+		log.Println("HandlePacket: Packet arrived out of order: ", p)
+		log.Printf("Expect sequence number: %v; Received: %v", sock.nextExpectedByte, relSeqNum)
+
+		// sock.outOfOrderQueue.Push(p)
+	}
+
+	conn := sock.conn
+
+	tcpHdr = header.TCPFields{
+		SrcPort:    conn.localPort,
+		DstPort:    conn.foreignPort,
+		SeqNum:     sock.myInitSeqNum + sock.numBytesSent.Load(),
+		AckNum:     sock.nextExpectedByte.Load() + sock.foreignInitSeqNum,
+		DataOffset: TcpHeaderLen,
+		Flags:      header.TCPFlagAck, // what flag should we set?
+		WindowSize: uint16(sock.readBuffer.Free()),
+		// To compute
+		Checksum:      0,
+		UrgentPointer: 0,
 	}
 
 	// send an ack for the next expected byte
