@@ -40,7 +40,7 @@ func (l *TcpListener) VAccept() (*TcpConn, error) {
 			return nil, errors.New(errMsg)
 		}
 
-		sock, err := MakeTcpSocket(SYN_RECEIVED)
+		sock, err := MakeTcpSocket(SYN_RECEIVED, p.header.SeqNum)
 		if err != nil {
 			state.lock.Unlock()
 			return nil, err
@@ -49,14 +49,10 @@ func (l *TcpListener) VAccept() (*TcpConn, error) {
 
 		state.lock.Unlock()
 
-		sock.foreignInitSeqNum = p.header.SeqNum
-
 		// first we need to send a syn-ack
 		tcpHdr := header.TCPFields{
-			SrcPort: conn.localPort,
-			DstPort: conn.foreignPort,
-			// ⚠️ ⬇️⬇️⬇️ adjust these values ⬇️⬇️⬇️
-			// seq num becomes a random value
+			SrcPort:    conn.localPort,
+			DstPort:    conn.foreignPort,
 			SeqNum:     sock.myInitSeqNum,
 			AckNum:     p.header.SeqNum + 1,
 			DataOffset: TcpHeaderLen,
@@ -98,7 +94,7 @@ func (l *TcpListener) VAccept() (*TcpConn, error) {
 			return nil, errors.New("connection closed")
 		}
 
-		go conn.HandleConnection()
+		go sock.HandleConnection()
 
 		return &conn, nil
 	case <-l.stop:

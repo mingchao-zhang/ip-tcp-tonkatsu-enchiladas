@@ -4,6 +4,8 @@ import (
 	"fmt"
 	link "ip/pkg/ipinterface"
 	"ip/pkg/network"
+	"math/rand"
+	"time"
 
 	"github.com/google/netstack/tcpip/header"
 	"golang.org/x/net/ipv4"
@@ -83,6 +85,24 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 
 	// if p.header.SeqNum ==
 
+	absSeqNum := p.header.SeqNum - sock.foreignInitSeqNum
+
+	if absSeqNum == sock.nextExpectedByte.Load() {
+		if sock.readBuffer.Free() >= len(p.data) {
+			// write the data to the buffer if there is enough space available
+			sock.readBuffer.Write(p.data)
+			sock.nextExpectedByte.Add(uint32(len(p.data)))
+		} // else {
+		// 	// this ideally should not happen
+		// 	// drop the packet
+		// }
+	} else {
+		// add the packet to the heap of packets
+		sock.outOfOrderQueue.Push(p)
+	}
+
+	// send an ack for the next expected byte
+
 }
 
 func (sock *TcpSocket) HandleConnection() {
@@ -109,6 +129,8 @@ func (l *TcpListener) VClose() error {
 
 func TCPInit(fwdTable *network.FwdTable) {
 	fwdTable.RegisterHandlerSafe(TcpProtocolNum, TcpHandler)
+
+	rand.Seed(time.Now().UnixMicro())
 
 	state = &TcpState{
 		sockets:        make(map[TcpConn]*TcpSocket),

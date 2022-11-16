@@ -1,6 +1,7 @@
 package tcp
 
 import (
+	"container/heap"
 	"math/rand"
 
 	"github.com/smallnest/ringbuffer"
@@ -15,6 +16,7 @@ type TcpSocket struct {
 	connState         byte
 	myInitSeqNum      uint32
 	foreignInitSeqNum uint32
+	outOfOrderQueue   heap.Interface
 	nextExpectedByte  *atomic.Uint32
 }
 
