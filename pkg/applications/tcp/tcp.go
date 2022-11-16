@@ -107,7 +107,7 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 
 	conn := sock.conn
 
-	tcpHdr = header.TCPFields{
+	ackHdr := header.TCPFields{
 		SrcPort:    conn.localPort,
 		DstPort:    conn.foreignPort,
 		SeqNum:     sock.myInitSeqNum + sock.numBytesSent.Load(),
@@ -119,6 +119,19 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 		Checksum:      0,
 		UrgentPointer: 0,
 	}
+
+	ackPacket := TcpPacket{
+		header: ackHdr,
+		data:   []byte{},
+	}
+
+	state.fwdTable.Lock.RLock()
+	state.fwdTable.SendMsgToDestIP(
+		sock.conn.foreignIP,
+		TcpProtocolNum,
+		ackPacket.Marshal(),
+	)
+	state.fwdTable.Lock.RUnlock()
 
 	// send an ack for the next expected byte
 
