@@ -3,8 +3,9 @@ package main
 import (
 	"bufio"
 	"fmt"
-	app "ip/pkg/applications"
+	"ip/pkg/applications/rip"
 	"ip/pkg/applications/tcp"
+	"ip/pkg/applications/testprotocol"
 	link "ip/pkg/ipinterface"
 	"ip/pkg/network"
 	"ip/pkg/transport"
@@ -12,8 +13,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-
-	"github.com/smallnest/ringbuffer"
 )
 
 type Node struct {
@@ -74,13 +73,13 @@ func (node *Node) init(linkFileName string, listenChan *chan []byte) int {
 	node.FwdTable.InitSafe(ipInterfaces, node.Conn)
 
 	// register handlers
-	app.TestProtocolInit(&node.FwdTable)
-	app.RIPInit(&node.FwdTable)
+	testprotocol.TestProtocolInit(&node.FwdTable)
+	rip.RIPInit(&node.FwdTable)
 	tcp.TCPInit(&node.FwdTable)
 	return 0
 }
 
-func handleCli(text string, node *Node) {
+func handleInput(text string, node *Node) {
 	words := strings.Fields(text)
 	if len(words) == 0 {
 		return
@@ -111,7 +110,7 @@ func handleCli(text string, node *Node) {
 				node.FwdTable.SetInterfaceStateSafe(interfaceId, link.InterfaceStateFromString(words[0]))
 			}
 		}
-	} else if words[0] == "send" && len(words) >= 4 {
+	} else if len(words) >= 4 && words[0] == "send" {
 		msgStartIdx := len("send") + 1 + len(words[1]) + 1 + len(words[2]) + 1
 		msg := text[msgStartIdx:]
 		protocolNum, err := strconv.Atoi(words[2])
@@ -126,7 +125,7 @@ func handleCli(text string, node *Node) {
 		if err != nil {
 			log.Printf("Error: %v\nUnable to send message \"%v\" to %v\n", err, msg, words[1])
 		}
-	} else if words[0] == "a" && len(words) == 2 {
+	} else if len(words) == 2 && words[0] == "a" {
 		port, err := strconv.Atoi(words[1])
 		if err != nil {
 			log.Printf("Invalid TCP port: %s", words[1])
@@ -136,12 +135,13 @@ func handleCli(text string, node *Node) {
 		if err != nil {
 			log.Println(err)
 		}
+		// we don't want the server to block cli
 		go func() {
 			for {
 				listener.VAccept()
 			}
 		}()
-	} else if words[0] == "c" && len(words) == 3 {
+	} else if len(words) == 3 && words[0] == "c" {
 		foreignIP := words[1]
 		port, err := strconv.Atoi(words[2])
 		if err != nil {
@@ -149,44 +149,47 @@ func handleCli(text string, node *Node) {
 		}
 		fmt.Printf("TCP Connecting to %s: %d\n", foreignIP, port)
 
-		_, err = tcp.VConnect(link.IntIPFromString(foreignIP), uint16(port))
+		go func() {
+			_, err = tcp.VConnect(link.IntIPFromString(foreignIP), uint16(port))
+			if err != nil {
+				log.Println(err)
+			}
+		}()
+	} else if len(words) == 3 && words[0] == "s" {
+		// s <socket ID> <data>
+		socketId, err := strconv.Atoi(words[1])
 		if err != nil {
-			log.Println(err)
+			log.Printf("Invalid socket Id: %s", words[1])
 		}
+		payload := []byte(words[2])
+
+		// TODO: CALL WRITE
+		// tcp.V
+
+		fmt.Println(socketId, string(payload))
+	} else if (len(words) == 3 || len(words) == 4) && words[0] == "r" {
+		// r <socket ID> <numbytes> <y|N>
+		socketId, err := strconv.Atoi(words[1])
+		if err != nil {
+			log.Printf("Invalid socket Id: %s", words[1])
+		}
+		bytesToRead, err := strconv.Atoi(words[2])
+		if err != nil {
+			log.Printf("Invalid bytesToRead: %s", words[2])
+		}
+		block := false
+		if len(words) == 4 && (words[3] == "y" || words[3] == "Y") {
+			block = true
+		}
+
+		// TODO: CALL READ
+		fmt.Println(socketId, bytesToRead, block)
 	} else {
 		fmt.Println("Unsupported command")
 	}
 }
 
 func main() {
-	rb := ringbuffer.New(5)
-
-	// write
-	rb.Write([]byte("abcde"))
-	fmt.Println(rb.Length())
-	fmt.Println("Space after adding 5 bytes: ", rb.Free())
-	// we can't write 123 until we read abc
-	rb.Write([]byte("123"))
-
-	bite, _ := rb.ReadByte()
-	fmt.Printf("%s\n", []byte{bite})
-	rb.Write([]byte("123"))
-
-	buf := make([]byte, 5)
-
-	rb.Read(buf)
-
-	fmt.Printf("After read: %s\n", string(buf))
-
-	// // read
-	// rb.Read(buf)
-	// fmt.Println(string(buf))
-	// fmt.Println(rb.Free())
-	// rb.Write([]byte("123"))
-	// rb.Read(buf)
-	// fmt.Println(string(buf))
-	// fmt.Println(rb.Free())
-
 	if len(os.Args) != 2 {
 		log.Println("Incorrect number of arguments. Correct usage: node <linksfile>")
 		os.Exit(1)
@@ -211,13 +214,17 @@ func main() {
 	// start receiving udp packets
 	go node.Conn.Recv()
 
-	// Watch all channels, act on one when something happens
-	for {
-		select {
-		case text := <-keyboardChan:
-			go handleCli(text, &node)
-		case buffer := <-listenChan:
+	go func() {
+		for {
+			buffer := <-listenChan
 			go node.FwdTable.HandlePacketSafe(buffer)
 		}
+	}()
+
+	// Watch all channels, act on one when something happens
+	for {
+		fmt.Printf(">>> ")
+		text := <-keyboardChan
+		handleInput(text, &node)
 	}
 }

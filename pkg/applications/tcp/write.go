@@ -11,7 +11,7 @@ func (conn *TcpConn) VWrite(buff []byte) (int, error) {
 	state.lock.RLock()
 	sock := state.sockets[*conn]
 	state.lock.RUnlock()
-	writeBuffer := sock.readBuffer
+	writeBuffer := sock.writeBuffer
 	totalBytesWritten := 0
 
 	for totalBytesWritten < len(buff) {

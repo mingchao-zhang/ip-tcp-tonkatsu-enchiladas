@@ -116,7 +116,30 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 
 func (sock *TcpSocket) HandleWrites() {
 
+	var totalBytesWritten = 0
+	writeBuffer := sock.writeBuffer
+
+	if !writeBuffer.IsEmpty() {
+
+	}
 }
+
+// for totalBytesWritten < len(buff) {
+// 	// we wait until there are more bytes to read
+// 	if readBuffer.IsEmpty() {
+// 		time.Sleep(READ_WRITE_SLEEP_TIME)
+// 	} else {
+// 		bytesRead, err := readBuffer.Read(buff[totalBytesWritten:])
+// 		if err != nil {
+// 			log.Println("error in HandleWrites: ", err)
+// 		}
+// 		totalBytesWritten += bytesRead
+// 	}
+// }
+
+// if totalBytesWritten != len(buff) {
+// 	log.Fatalln("VRead read too many bytes 💀")
+// }
 
 func (sock *TcpSocket) HandleConnection() {
 	t := time.NewTicker(READ_WRITE_SLEEP_TIME)
