@@ -6,8 +6,8 @@ import (
 	"ip/pkg/network"
 	"sync"
 
-	"github.com/armon/circbuf"
 	"github.com/google/netstack/tcpip/header"
+	"github.com/smallnest/ringbuffer"
 )
 
 const (
@@ -47,8 +47,8 @@ type TcpListener struct {
 }
 
 type TcpSocket struct {
-	readBuffer  *circbuf.Buffer
-	writeBuffer *circbuf.Buffer
+	readBuffer  *ringbuffer.RingBuffer
+	writeBuffer *ringbuffer.RingBuffer
 	ch          chan *TcpPacket
 	stop        chan bool
 	state       byte
@@ -56,22 +56,12 @@ type TcpSocket struct {
 }
 
 func MakeTcpSocket(state byte) (*TcpSocket, error) {
-	readBuf, err := circbuf.NewBuffer(BufferSize)
-	if err != nil {
-		return nil, err
-	}
-
-	writeBuf, err := circbuf.NewBuffer(BufferSize)
-	if err != nil {
-		return nil, err
-	}
-
 	// replace with random later
 	initSeqNum := 0
 
 	return &TcpSocket{
-		readBuffer:  readBuf,
-		writeBuffer: writeBuf,
+		readBuffer:  ringbuffer.New(BufferSize),
+		writeBuffer: ringbuffer.New(BufferSize),
 		ch:          make(chan *TcpPacket),
 		stop:        make(chan bool),
 		state:       state,

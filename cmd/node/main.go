@@ -12,6 +12,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/smallnest/ringbuffer"
 )
 
 type Node struct {
@@ -157,6 +159,34 @@ func handleCli(text string, node *Node) {
 }
 
 func main() {
+	rb := ringbuffer.New(5)
+
+	// write
+	rb.Write([]byte("abcde"))
+	fmt.Println(rb.Length())
+	fmt.Println("Space after adding 5 bytes: ", rb.Free())
+	// we can't write 123 until we read abc
+	rb.Write([]byte("123"))
+
+	bite, _ := rb.ReadByte()
+	fmt.Printf("%s\n", []byte{bite})
+	rb.Write([]byte("123"))
+
+	buf := make([]byte, 5)
+
+	rb.Read(buf)
+
+	fmt.Printf("After read: %s\n", string(buf))
+
+	// // read
+	// rb.Read(buf)
+	// fmt.Println(string(buf))
+	// fmt.Println(rb.Free())
+	// rb.Write([]byte("123"))
+	// rb.Read(buf)
+	// fmt.Println(string(buf))
+	// fmt.Println(rb.Free())
+
 	if len(os.Args) != 2 {
 		log.Println("Incorrect number of arguments. Correct usage: node <linksfile>")
 		os.Exit(1)
