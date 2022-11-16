@@ -61,31 +61,7 @@ func TcpHandler(rawMsg []byte, params []interface{}) {
 }
 
 func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
-	// makes sense of the packet
-	// if the packet is an ack, then we have to update our write buffer
-
-	// how do we know if it is an ack or a data packet?
-
-	// if p.header.Flags & header.TCPFlagAck != 0 {
-	// 	// we got an ACK
-
-	// } else {
-	// 	// this might be a packet with some data in it
-
-	// }
-
-	// if we get a packet we check if it is the next packet we were expecting to get
-	// if it is not then we add it to the out of order queue
-	// else if it was the next then we update the value of the next packet we expect to see
-	// 		and send an ack with that next value
-
-	// if
-
-	// if sequence number of the packet is the same as what we expect
-	// we will add it to the read buffer and update the next field
-
-	// if p.header.SeqNum ==
-	// convert from RAW to RELATIVE
+	// what could go wrong if we have multiple packets being handled at the same time?
 	relSeqNum := p.header.SeqNum - sock.foreignInitSeqNum
 
 	if relSeqNum == sock.nextExpectedByte.Load() {
@@ -93,10 +69,13 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 			// write the data to the buffer if there is enough space available
 			sock.readBuffer.Write(p.data)
 			sock.nextExpectedByte.Add(uint32(len(p.data)))
-		} // else {
-		// 	// this ideally should not happen
-		// 	// drop the packet
-		// }
+
+			// TODO: check if any early arrivals can be added to the read buffer, and
+		} else {
+			return
+			// this ideally should not happen
+			// drop the packet
+		}
 	} else {
 		// add the packet to the heap of packets
 		log.Println("HandlePacket: Packet arrived out of order: ", p)
@@ -133,16 +112,22 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 	)
 	state.fwdTable.Lock.RUnlock()
 
-	// send an ack for the next expected byte
+}
+
+func (sock *TcpSocket) HandleWrites() {
 
 }
 
 func (sock *TcpSocket) HandleConnection() {
-
+	t := time.NewTicker(READ_WRITE_SLEEP_TIME)
 	for {
-		p := <-sock.ch
+		select {
+		case p := <-sock.ch:
+			go sock.HandlePacket(p)
+		case <-t.C:
+			go sock.HandleWrites()
+		}
 
-		go sock.HandlePacket(p)
 	}
 
 	// have a thread waiting for data in the write buffer,
