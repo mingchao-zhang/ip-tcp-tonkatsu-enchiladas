@@ -80,8 +80,10 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 
 	// if sequence number of the packet is the same as what we expect
 	// we will add it to the read buffer and update the next field
-	
-	if p.header.SeqNum == 
+	absSeqNum := p.header.SeqNum - sock.foreignInitSeqNum
+	if absSeqNum == sock.nextExpectedByte.Load() {
+
+	}
 
 }
 

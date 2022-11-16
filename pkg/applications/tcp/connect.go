@@ -71,6 +71,7 @@ func VConnect(foreignIP link.IntIP, foreignPort uint16) (*TcpConn, error) {
 			deleteConnSafe(&conn)
 			return nil, errors.New("received packet with wrong flags during handshake")
 		}
+
 		// send ACK
 		tcpHdr = header.TCPFields{
 			SrcPort:    conn.localPort,
