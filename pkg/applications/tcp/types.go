@@ -8,12 +8,25 @@ import (
 	"time"
 
 	"github.com/google/netstack/tcpip/header"
+	"go.uber.org/atomic"
 )
 
 const (
-	// Add all the TCP states here?
 	READ_WRITE_SLEEP_TIME = time.Millisecond * 10
+	TcpProtocolNum        = uint8(header.TCPProtocolNumber)
+	TcpHeaderLen          = header.TCPMinimumSize
+	BufferSize            = 1<<16 - 1
+
+	SYN_RECEIVED = "SYN_RECEIVED"
+	SYN_SENT     = "SYN_SENT"
+	ESTABLISHED  = "ESTAB"
+	FIN_WAIT_1   = "FIN_WAIT_1"
+	FIN_WAIT_2   = "FIN_WAIT_2"
+	CLOSE_WAIT   = "CLOSE_WAIT"
+	LAST_ACK     = "LAST_ACK"
 )
+
+var nextSockId = atomic.NewInt32(-1)
 
 type TcpState struct {
 	sockets   map[TcpConn]*TcpSocket
@@ -34,10 +47,11 @@ type TcpPacket struct {
 }
 
 type TcpListener struct {
-	ip   link.IntIP
-	port uint16
-	ch   chan *TcpPacket
-	stop chan bool
+	socketId int
+	ip       link.IntIP
+	port     uint16
+	ch       chan *TcpPacket
+	stop     chan bool
 }
 
 type TcpConn struct {

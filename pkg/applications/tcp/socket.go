@@ -10,7 +10,7 @@ import (
 
 type TcpSocket struct {
 	sockId    int
-	connState byte
+	connState string
 	conn      *TcpConn
 
 	readBuffer  *ringbuffer.RingBuffer
@@ -27,9 +27,7 @@ type TcpSocket struct {
 	outOfOrderQueue heap.Interface
 }
 
-var nextSockId = atomic.NewInt32(-1)
-
-func MakeTcpSocket(connState byte, tcpConn *TcpConn, foreignInitSeqNum uint32) (*TcpSocket, error) {
+func MakeTcpSocket(connState string, tcpConn *TcpConn, foreignInitSeqNum uint32) (*TcpSocket, error) {
 	return &TcpSocket{
 		sockId: int(nextSockId.Add(1)),
 

@@ -12,20 +12,6 @@ import (
 	"golang.org/x/net/ipv4"
 )
 
-const (
-	TcpProtocolNum = uint8(header.TCPProtocolNumber)
-	TcpHeaderLen   = header.TCPMinimumSize
-	BufferSize     = 1<<16 - 1
-
-	SYN_RECEIVED = 0
-	SYN_SENT     = 1
-	ESTABLISHED  = 2
-	FIN_WAIT_1   = 3
-	FIN_WAIT_2   = 4
-	CLOSE_WAIT   = 5
-	LAST_ACK     = 6
-)
-
 var state *TcpState
 
 func TcpHandler(rawMsg []byte, params []interface{}) {
@@ -116,12 +102,12 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 
 func (sock *TcpSocket) HandleWrites() {
 
-	var totalBytesWritten = 0
-	writeBuffer := sock.writeBuffer
+	// var totalBytesWritten = 0
+	// writeBuffer := sock.writeBuffer
 
-	if !writeBuffer.IsEmpty() {
+	// if !writeBuffer.IsEmpty() {
 
-	}
+	// }
 }
 
 // for totalBytesWritten < len(buff) {
@@ -182,41 +168,9 @@ func TCPInit(fwdTable *network.FwdTable) {
 	}
 }
 
-// FINISHED FUNCTIONS ----------------------------------------------------------
-func ParseTCPHeader(b []byte) header.TCPFields {
-	td := header.TCP(b)
-	return header.TCPFields{
-		SrcPort:    td.SourcePort(),
-		DstPort:    td.DestinationPort(),
-		SeqNum:     td.SequenceNumber(),
-		AckNum:     td.AckNumber(),
-		DataOffset: td.DataOffset(),
-		Flags:      td.Flags(),
-		WindowSize: td.WindowSize(),
-		Checksum:   td.Checksum(),
-	}
-}
-
-func UnmarshalTcpPacket(rawMsg []byte, srcIP link.IntIP) *TcpPacket {
-	tcpHeader := ParseTCPHeader(rawMsg)
-	tcpPacket := TcpPacket{
-		header: tcpHeader,
-		data:   rawMsg[tcpHeader.DataOffset:],
-		srcIP:  srcIP,
-	}
-
-	return &tcpPacket
-}
-
-func (p *TcpPacket) Marshal() []byte {
-	tcphdr := make(header.TCP, TcpHeaderLen)
-	tcphdr.Encode(&p.header)
-
-	// return header appended to data
-	return append([]byte(tcphdr), p.data...)
-}
-
-// allocatePort unsafely (without locking) returns an unused port and modify state
+// HELPER FUNCTIONS --------------------------------------------------
+// allocatePort unsafely (without locking)
+// returns an unused port and modify state
 func allocatePortUnsafe() uint16 {
 
 	// find the port we could use
