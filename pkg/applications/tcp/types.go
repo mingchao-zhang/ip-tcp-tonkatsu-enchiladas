@@ -4,6 +4,7 @@ import (
 	"fmt"
 	link "ip/pkg/ipinterface"
 	"ip/pkg/network"
+	"ip/pkg/transport"
 	"sync"
 	"time"
 
@@ -16,6 +17,7 @@ const (
 	TcpProtocolNum        = uint8(header.TCPProtocolNumber)
 	TcpHeaderLen          = header.TCPMinimumSize
 	BufferSize            = 1<<16 - 1
+	TcpMaxSegmentSize     = transport.MAXMSGSIZE - TcpHeaderLen - header.IPv4MinimumSize
 
 	SYN_RECEIVED = "SYN_RECEIVED"
 	SYN_SENT     = "SYN_SENT"

@@ -35,3 +35,11 @@ func deleteConnSafe(conn *TcpConn) {
 	delete(state.sockets, *conn)
 	state.lock.Unlock()
 }
+
+func min(a int, b int) int {
+	if a < b {
+		return a
+	} else {
+		return b
+	}
+}
