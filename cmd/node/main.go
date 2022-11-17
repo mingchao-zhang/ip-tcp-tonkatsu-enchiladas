@@ -155,7 +155,7 @@ func handleInput(text string, node *Node) {
 				log.Println(err)
 			}
 		}()
-	} else if len(words) == 3 && words[0] == "s" {
+	} else if len(words) == 3 && words[0] == "s" { // SEND
 		// s <socket ID> <data>
 		socketId, err := strconv.Atoi(words[1])
 		if err != nil {
@@ -167,7 +167,7 @@ func handleInput(text string, node *Node) {
 		// tcp.V
 
 		fmt.Println(socketId, string(payload))
-	} else if (len(words) == 3 || len(words) == 4) && words[0] == "r" {
+	} else if (len(words) == 3 || len(words) == 4) && words[0] == "r" { // WRITE
 		// r <socket ID> <numbytes> <y|N>
 		socketId, err := strconv.Atoi(words[1])
 		if err != nil {
