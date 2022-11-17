@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	link "ip/pkg/ipinterface"
+	"time"
 
 	"github.com/google/netstack/tcpip/header"
 )
@@ -61,6 +62,7 @@ func VConnect(foreignIP link.IntIP, foreignPort uint16) (*TcpConn, error) {
 
 	// wait for a SYN-ACK
 	// possibly also wait on stop
+	timeout := time.After(time.Second * 2)
 	select {
 	case packet := <-sock.ch:
 		receivedHdr := packet.header
@@ -102,6 +104,11 @@ func VConnect(foreignIP link.IntIP, foreignPort uint16) (*TcpConn, error) {
 		fmt.Printf("In Connect: %s\n", sock)
 		go sock.HandleConnection()
 		return &conn, nil
+
+	case <-timeout:
+		fmt.Println("timed out")
+		deleteConnSafe(&conn)
+		return nil, errors.New("connection timed out")
 	case <-sock.stop:
 		deleteConnSafe(&conn)
 		return nil, errors.New("connection closed")

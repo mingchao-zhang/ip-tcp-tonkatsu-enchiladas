@@ -3,6 +3,7 @@ package tcp
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/netstack/tcpip/header"
 )
@@ -76,6 +77,7 @@ func (l *TcpListener) VAccept() (*TcpConn, error) {
 		}
 		sock.connState = SYN_SENT
 
+		timeout := time.After(time.Second * 2)
 		select {
 		case p := <-sock.ch:
 			if (p.header.Flags & header.TCPFlagAck) != 0 {
@@ -91,11 +93,15 @@ func (l *TcpListener) VAccept() (*TcpConn, error) {
 			// when the listener calls close(),
 			// removes the listener from listeners
 			// and all the active connections from the socket table
+		case <-timeout:
+			fmt.Println("timed out")
+			deleteConnSafe(&conn)
+			return nil, errors.New("connection timed out")
 		case <-l.stop:
 			deleteConnSafe(&conn)
 			return nil, errors.New("connection closed")
 		}
-
+		fmt.Println("here")
 		go sock.HandleConnection()
 
 		return &conn, nil

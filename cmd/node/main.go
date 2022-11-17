@@ -180,7 +180,17 @@ func handleInput(text string, node *Node) {
 		}
 
 		payload := make([]byte, bytesToRead)
-		tcp.VRead(socketId, payload)
+
+		readFn := func() {
+			tcp.VRead(socketId, payload)
+			fmt.Println(string(payload))
+		}
+
+		if block {
+			readFn()
+		} else {
+			go readFn()
+		}
 		fmt.Println(string(payload), block)
 	} else if len(words) == 1 && words[0] == "ls" {
 		fmt.Print(*tcp.GetSocketInfo())

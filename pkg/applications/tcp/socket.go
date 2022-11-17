@@ -65,7 +65,7 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 	// 1. try to write data either in the read buffer or in the heap
 	relSeqNum := p.header.SeqNum - sock.foreignInitSeqNum
 
-	if relSeqNum == sock.nextExpectedByte.Load() {
+	if relSeqNum == sock.nextExpectedByte.Load() && len(p.data) > 0 {
 		if sock.readBuffer.Free() >= len(p.data) {
 			// write the data to the buffer if there is enough space available
 			sock.readBuffer.Write(p.data)
@@ -101,14 +101,15 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 
 	// 3. send an ack back
 	// increase nextExpectedByte before constructing the header
-	ackPacket := TcpPacket{
-		header: *sock.getAckHeader(),
-		data:   []byte{},
-	}
-
-	err := sendTcp(sock.conn.foreignIP, ackPacket.Marshal())
-	if err != nil {
-		fmt.Println("handle packet step 3: ", err)
+	if len(p.data) != 0 {
+		ackPacket := TcpPacket{
+			header: *sock.getAckHeader(),
+			data:   []byte{},
+		}
+		err := sendTcp(sock.conn.foreignIP, ackPacket.Marshal())
+		if err != nil {
+			fmt.Println("handle packet step 3: ", err)
+		}
 	}
 }
 
