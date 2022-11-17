@@ -77,12 +77,14 @@ func (l *TcpListener) VAccept() (*TcpConn, error) {
 			deleteConnSafe(&conn)
 			return nil, err
 		}
+		sock.connState = SYN_SENT
 
 		select {
 		case p := <-sock.ch:
 			if (p.header.Flags & header.TCPFlagAck) != 0 {
 				// at this point we have established a connection
 				// check if the appropriate number was acked
+				sock.connState = ESTABLISHED
 				fmt.Println("we did it :partyemoji:")
 			}
 			// TODO: When is data pushed into l.stop?

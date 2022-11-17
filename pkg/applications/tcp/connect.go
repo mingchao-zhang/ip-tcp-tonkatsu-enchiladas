@@ -69,7 +69,7 @@ func VConnect(foreignIP link.IntIP, foreignPort uint16) (*TcpConn, error) {
 		// check if the appropriate number was acked
 		if (receivedHdr.Flags&header.TCPFlagSyn == 0) || (receivedHdr.Flags&header.TCPFlagAck == 0) {
 			deleteConnSafe(&conn)
-			return nil, errors.New("Connect did not receive both SYN and ACK during handshake")
+			return nil, errors.New("connect did not receive both SYN and ACK during handshake")
 		}
 
 		sock.foreignInitSeqNum = receivedHdr.SeqNum
@@ -101,6 +101,7 @@ func VConnect(foreignIP link.IntIP, foreignPort uint16) (*TcpConn, error) {
 		}
 
 		// conn established
+		sock.connState = ESTABLISHED
 		go sock.HandleConnection()
 		return &conn, nil
 	case <-sock.stop:

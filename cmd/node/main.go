@@ -184,6 +184,10 @@ func handleInput(text string, node *Node) {
 
 		// TODO: CALL READ
 		fmt.Println(socketId, bytesToRead, block)
+	} else if len(words) == 1 && words[0] == "ls" {
+		fmt.Print(*tcp.GetSocketInfo())
+	} else if len(words) == 1 && words[0] == "h" {
+		fmt.Println(HELP_MSG)
 	} else {
 		fmt.Println("Unsupported command")
 	}
@@ -228,3 +232,37 @@ func main() {
 		handleInput(text, &node)
 	}
 }
+
+const (
+	HELP_MSG = `
+    Commands:
+    a <port>                       - Spawn a socket, bind it to the given port,
+                                     and start accepting connections on that port.
+    c <ip> <port>                  - Attempt to connect to the given ip address,
+                                     in dot notation, on the given port.
+    s <socket> <data>              - Send a string on a socket.
+    r <socket> <numbytes> [y|n]    - Try to read data from a given socket. If
+                                     the last argument is y, then you should
+                                     block until numbytes is received, or the
+                                     connection closes. If n, then don.t block;
+                                     return whatever recv returns. Default is n.
+    sf <filename> <ip> <port>      - Connect to the given ip and port, send the
+                                     entirety of the specified file, and close
+                                     the connection.
+    rf <filename> <port>           - Listen for a connection on the given port.
+                                     Once established, write everything you can
+                                     read from the socket to the given file.
+                                     Once the other side closes the connection,
+                                     close the connection as well.
+    sd <socket> [read|write|both]  - v_shutdown on the given socket.
+    cl <socket>                    - v_close on the given socket.
+    up <id>                        - enable interface with id
+    down <id>                      - disable interface with id
+    li, interfaces                 - list interfaces
+    lr, routes                     - list routing table rows
+    ls, sockets                    - list sockets (fd, ip, port, state)
+    window <socket>                - lists window sizes for socket
+    q, quit                        - no cleanup, exit(0)
+    h, help                        - show this help
+    `
+)
