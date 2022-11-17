@@ -69,10 +69,7 @@ func (l *TcpListener) VAccept() (*TcpConn, error) {
 		}
 
 		packetBytes := synAckPacket.Marshal()
-
-		state.fwdTable.Lock.RLock()
-		err = state.fwdTable.SendMsgToDestIP(conn.foreignIP, TcpProtocolNum, packetBytes)
-		state.fwdTable.Lock.RUnlock()
+		err = sendTcp(conn.foreignIP, packetBytes)
 		if err != nil {
 			deleteConnSafe(&conn)
 			return nil, err
@@ -86,7 +83,10 @@ func (l *TcpListener) VAccept() (*TcpConn, error) {
 				// check if the appropriate number was acked
 				sock.connState = ESTABLISHED
 				fmt.Println("we did it :partyemoji:")
+				sock.foreignWindowSize.Swap(uint32(p.header.WindowSize))
+				fmt.Printf("In Accept %s\n", sock)
 			}
+
 			// TODO: When is data pushed into l.stop?
 			// when the listener calls close(),
 			// removes the listener from listeners

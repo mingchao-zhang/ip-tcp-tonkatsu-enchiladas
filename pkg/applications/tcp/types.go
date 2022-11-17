@@ -13,11 +13,12 @@ import (
 )
 
 const (
-	READ_WRITE_SLEEP_TIME = time.Millisecond * 10
-	TcpProtocolNum        = uint8(header.TCPProtocolNumber)
-	TcpHeaderLen          = header.TCPMinimumSize
-	BufferSize            = 1<<16 - 1
-	TcpMaxSegmentSize     = transport.MAXMSGSIZE - TcpHeaderLen - header.IPv4MinimumSize
+	READ_WRITE_SLEEP_TIME = time.Second * 2
+	// READ_WRITE_SLEEP_TIME = time.Millisecond * 10
+	TcpProtocolNum    = uint8(header.TCPProtocolNumber)
+	TcpHeaderLen      = header.TCPMinimumSize
+	BufferSize        = 1<<16 - 1
+	TcpMaxSegmentSize = transport.MAXMSGSIZE - TcpHeaderLen - header.IPv4MinimumSize
 
 	SYN_RECEIVED = "SYN_RECEIVED"
 	SYN_SENT     = "SYN_SENT"

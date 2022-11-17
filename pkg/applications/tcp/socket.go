@@ -49,10 +49,14 @@ func MakeTcpSocket(connState string, tcpConn *TcpConn, foreignInitSeqNum uint32)
 		ch:   make(chan *TcpPacket),
 		stop: make(chan bool),
 
-		myInitSeqNum:      rand.Uint32(),
-		foreignInitSeqNum: foreignInitSeqNum,
-		numBytesSent:      atomic.NewUint32(0),
-		nextExpectedByte:  atomic.NewUint32(0),
+		myInitSeqNum:     rand.Uint32(),
+		numBytesSent:     atomic.NewUint32(0),
+		nextExpectedByte: atomic.NewUint32(0),
+
+		// foreign numbers
+		foreignInitSeqNum:  foreignInitSeqNum,
+		largestAckReceived: atomic.NewUint32(0),
+		foreignWindowSize:  atomic.NewUint32(0),
 	}, nil
 }
 
@@ -102,14 +106,10 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 		data:   []byte{},
 	}
 
-	state.fwdTable.Lock.RLock()
-	state.fwdTable.SendMsgToDestIP(
-		sock.conn.foreignIP,
-		TcpProtocolNum,
-		ackPacket.Marshal(),
-	)
-	state.fwdTable.Lock.RUnlock()
-
+	err := sendTcp(sock.conn.foreignIP, ackPacket.Marshal())
+	if err != nil {
+		fmt.Println("handle packet step 3: ", err)
+	}
 }
 
 func (sock *TcpSocket) HandleWrites() {
@@ -124,6 +124,7 @@ func (sock *TcpSocket) HandleWrites() {
 	// get all the bytes to send
 	payload := make([]byte, sizeToWrite)
 	writeBuffer.Read(payload)
+	fmt.Println("In handlewrites payload: ", string(payload))
 
 	// split bytes into segments, construct tcp packets and send them
 	conn := sock.conn
@@ -143,9 +144,7 @@ func (sock *TcpSocket) HandleWrites() {
 		payload = payload[segmentSize:]
 
 		packetBytes := ackPacket.Marshal()
-		state.fwdTable.Lock.RLock()
-		err := state.fwdTable.SendMsgToDestIP(conn.foreignIP, TcpProtocolNum, packetBytes)
-		state.fwdTable.Lock.RUnlock()
+		err := sendTcp(conn.foreignIP, packetBytes)
 		if err != nil {
 			fmt.Println("Error in handleWrites from SendMsgToDestIP: ", err)
 			return
@@ -186,4 +185,19 @@ func (sock *TcpSocket) getAckHeader() *header.TCPFields {
 		Checksum:      0,
 		UrgentPointer: 0,
 	}
+}
+
+func (sock *TcpSocket) String() string {
+	res := "\n"
+	res += fmt.Sprintf("sockId: %d\n", sock.sockId)
+	res += fmt.Sprintf("connState: %s\n", sock.connState)
+	res += fmt.Sprintf("myInitSeqNum: %d\n", sock.myInitSeqNum)
+	res += fmt.Sprintf("numBytesSent: %d\n", sock.numBytesSent.Load())
+	res += fmt.Sprintf("nextExpectedByte: %d\n", sock.nextExpectedByte.Load())
+	res += fmt.Sprintf("foreignInitSeqNum: %d\n", sock.foreignInitSeqNum)
+	res += fmt.Sprintf("largestAckReceived: %d\n", sock.largestAckReceived.Load())
+	res += fmt.Sprintf("foreignWindowSize: %d\n", sock.foreignWindowSize.Load())
+	res += ": %\n"
+
+	return res
 }

@@ -163,10 +163,7 @@ func handleInput(text string, node *Node) {
 		}
 		payload := []byte(words[2])
 
-		// TODO: CALL WRITE
-		// tcp.V
-
-		fmt.Println(socketId, string(payload))
+		tcp.VWrite(socketId, payload)
 	} else if (len(words) == 3 || len(words) == 4) && words[0] == "r" { // WRITE
 		// r <socket ID> <numbytes> <y|N>
 		socketId, err := strconv.Atoi(words[1])
@@ -182,8 +179,9 @@ func handleInput(text string, node *Node) {
 			block = true
 		}
 
-		// TODO: CALL READ
-		fmt.Println(socketId, bytesToRead, block)
+		payload := make([]byte, bytesToRead)
+		tcp.VRead(socketId, payload)
+		fmt.Println(string(payload), block)
 	} else if len(words) == 1 && words[0] == "ls" {
 		fmt.Print(*tcp.GetSocketInfo())
 	} else if len(words) == 1 && words[0] == "h" {

@@ -53,9 +53,7 @@ func VConnect(foreignIP link.IntIP, foreignPort uint16) (*TcpConn, error) {
 	}
 	packetBytes := synPacket.Marshal()
 
-	state.fwdTable.Lock.RLock()
-	err = state.fwdTable.SendMsgToDestIP(foreignIP, TcpProtocolNum, packetBytes)
-	state.fwdTable.Lock.RUnlock()
+	err = sendTcp(foreignIP, packetBytes)
 	if err != nil {
 		deleteConnSafe(&conn)
 		return nil, err
@@ -92,9 +90,7 @@ func VConnect(foreignIP link.IntIP, foreignPort uint16) (*TcpConn, error) {
 			data:   make([]byte, 0),
 		}
 		packetBytes = ackPacket.Marshal()
-		state.fwdTable.Lock.RLock()
-		err = state.fwdTable.SendMsgToDestIP(foreignIP, TcpProtocolNum, packetBytes)
-		state.fwdTable.Lock.RUnlock()
+		err = sendTcp(foreignIP, packetBytes)
 		if err != nil {
 			deleteConnSafe(&conn)
 			return nil, err
@@ -102,6 +98,8 @@ func VConnect(foreignIP link.IntIP, foreignPort uint16) (*TcpConn, error) {
 
 		// conn established
 		sock.connState = ESTABLISHED
+		sock.foreignWindowSize.Swap(uint32(packet.header.WindowSize))
+		fmt.Printf("In Connect: %s\n", sock)
 		go sock.HandleConnection()
 		return &conn, nil
 	case <-sock.stop:
