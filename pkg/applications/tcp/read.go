@@ -1,19 +1,20 @@
 package tcp
 
 import (
+	"errors"
 	"log"
 	"time"
 )
 
-func (conn *TcpConn) VRead(buff []byte) (int, error) {
+// we need to write len(buff) bytes from the read buffer to buff
+func (conn *TcpConn) VRead(socketId int, buff []byte) (int, error) {
 	// TODO: validate TCP checksum
 
-	// we need to write len(buff) bytes from the read buffer to buff
-	state.lock.RLock()
-	sock := state.sockets[*conn]
-	state.lock.RUnlock()
+	sock := getSocketById(socketId)
+	if sock == nil {
+		return 0, errors.New("v_read() error: Bad file descriptor")
+	}
 	readBuffer := sock.readBuffer
-
 	var totalBytesRead = 0
 
 	for totalBytesRead < len(buff) {
