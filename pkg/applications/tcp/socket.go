@@ -62,7 +62,21 @@ func MakeTcpSocket(connState string, tcpConn *TcpConn, foreignInitSeqNum uint32)
 
 func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 	// what could go wrong if we have multiple packets being handled at the same time?
-	// 1. try to write data either in the read buffer or in the heap
+	// 1. modify largestAckReceived and foreignWindowSize
+	packetWindowSize := uint32(p.header.WindowSize)
+	if p.header.AckNum > sock.largestAckReceived.Load() {
+		sock.largestAckReceived.Swap(p.header.AckNum)
+		sock.foreignWindowSize.Swap(packetWindowSize)
+	} else if p.header.AckNum == sock.largestAckReceived.Load() {
+		if sock.foreignWindowSize.Load() < packetWindowSize {
+			sock.foreignWindowSize.Swap(packetWindowSize)
+		}
+	} else {
+		fmt.Println("Old ack received")
+		return
+	}
+
+	// 2. try to write data either in the read buffer or in the heap
 	relSeqNum := p.header.SeqNum - sock.foreignInitSeqNum
 
 	if relSeqNum == sock.nextExpectedByte.Load() && len(p.data) > 0 {
@@ -84,19 +98,6 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 		log.Printf("Expect sequence number: %v; Received: %v", sock.nextExpectedByte, relSeqNum)
 
 		// sock.outOfOrderQueue.Push(p)
-	}
-
-	// 2. modify largestAckReceived and foreignWindowSize
-	packetWindowSize := uint32(p.header.WindowSize)
-	if p.header.AckNum > sock.largestAckReceived.Load() {
-		sock.largestAckReceived.Swap(p.header.AckNum)
-		sock.foreignWindowSize.Swap(packetWindowSize)
-	} else if p.header.AckNum > sock.largestAckReceived.Load() {
-		if sock.foreignWindowSize.Load() < packetWindowSize {
-			sock.foreignWindowSize.Swap(packetWindowSize)
-		}
-	} else {
-		fmt.Println("Old invalid packets")
 	}
 
 	// 3. send an ack back
@@ -177,7 +178,7 @@ func (sock *TcpSocket) getAckHeader() *header.TCPFields {
 	return &header.TCPFields{
 		SrcPort:    sock.conn.localPort,
 		DstPort:    sock.conn.foreignPort,
-		SeqNum:     sock.myInitSeqNum + sock.numBytesSent.Load(),
+		SeqNum:     sock.myInitSeqNum + sock.numBytesSent.Load() + 1,
 		AckNum:     sock.nextExpectedByte.Load() + sock.foreignInitSeqNum,
 		DataOffset: TcpHeaderLen,
 		Flags:      header.TCPFlagAck, // what flag should we set?

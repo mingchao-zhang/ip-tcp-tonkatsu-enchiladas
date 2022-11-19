@@ -63,6 +63,7 @@ func (l *TcpListener) VAccept() (*TcpConn, error) {
 			Checksum:      0,
 			UrgentPointer: 0,
 		}
+		sock.nextExpectedByte.Store(1)
 
 		synAckPacket := TcpPacket{
 			header: tcpHdr,
@@ -81,6 +82,18 @@ func (l *TcpListener) VAccept() (*TcpConn, error) {
 		select {
 		case p := <-sock.ch:
 			if (p.header.Flags & header.TCPFlagAck) != 0 {
+				// we got an ack from the client
+				if p.header.SeqNum-sock.foreignInitSeqNum != 1 {
+					fmt.Println("Received unexpected sequence number")
+					deleteConnSafe(&conn)
+					return nil, errors.New("unexpected sequence number received")
+				}
+				if p.header.AckNum-sock.myInitSeqNum != 1 {
+					fmt.Println("Received unexpected ack number")
+					deleteConnSafe(&conn)
+					return nil, errors.New("unexpected ack number received")
+				}
+				sock.nextExpectedByte.Store(1)
 				// at this point we have established a connection
 				// check if the appropriate number was acked
 				sock.connState = ESTABLISHED

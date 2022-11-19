@@ -70,9 +70,13 @@ func VConnect(foreignIP link.IntIP, foreignPort uint16) (*TcpConn, error) {
 		if (receivedHdr.Flags&header.TCPFlagSyn == 0) || (receivedHdr.Flags&header.TCPFlagAck == 0) {
 			deleteConnSafe(&conn)
 			return nil, errors.New("connect did not receive both SYN and ACK during handshake")
+		} else if packet.header.AckNum-sock.myInitSeqNum != 1 {
+			deleteConnSafe(&conn)
+			return nil, errors.New("in connect: get incorrect ack number in the syn-ack packet")
 		}
 
 		sock.foreignInitSeqNum = receivedHdr.SeqNum
+		sock.nextExpectedByte.Store(1)
 
 		// send ACK
 		tcpHdr = header.TCPFields{
