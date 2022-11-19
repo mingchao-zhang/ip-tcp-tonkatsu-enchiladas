@@ -126,14 +126,17 @@ func handleInput(text string, node *Node) {
 			log.Printf("Error: %v\nUnable to send message \"%v\" to %v\n", err, msg, words[1])
 		}
 	} else if len(words) == 2 && words[0] == "a" {
+		// a <port>
 		port, err := strconv.Atoi(words[1])
 		if err != nil {
 			log.Printf("Invalid TCP port: %s", words[1])
+			return
 		}
 
 		listener, err := tcp.VListen(uint16(port))
 		if err != nil {
 			log.Println(err)
+			return
 		}
 		// we don't want the server to block cli
 		go func() {
@@ -142,12 +145,13 @@ func handleInput(text string, node *Node) {
 			}
 		}()
 	} else if len(words) == 3 && words[0] == "c" {
+		// c <ip> <port>
 		foreignIP := words[1]
 		port, err := strconv.Atoi(words[2])
 		if err != nil {
-			log.Printf("Invalid TCP port: %s", words[1])
+			log.Printf("Invalid TCP port: %s", words[2])
+			return
 		}
-		fmt.Printf("TCP Connecting to %s: %d\n", foreignIP, port)
 
 		go func() {
 			_, err = tcp.VConnect(link.IntIPFromString(foreignIP), uint16(port))
@@ -160,10 +164,16 @@ func handleInput(text string, node *Node) {
 		socketId, err := strconv.Atoi(words[1])
 		if err != nil {
 			log.Printf("Invalid socket Id: %s", words[1])
+			return
 		}
 		payload := []byte(words[2])
 
-		tcp.VWrite(socketId, payload)
+		bytesWritten, err := tcp.VWrite(socketId, payload)
+		if err != nil {
+			fmt.Println(err)
+		} else {
+			fmt.Printf("v_write() on %d bytes returned %d\n", len(payload), bytesWritten)
+		}
 	} else if (len(words) == 3 || len(words) == 4) && words[0] == "r" { // WRITE
 		// r <socket ID> <numbytes> <y|N>
 		socketId, err := strconv.Atoi(words[1])
@@ -186,6 +196,7 @@ func handleInput(text string, node *Node) {
 			fmt.Println(string(payload))
 		}
 
+		// v_read() on 2 bytes returned 1; contents of buffer: 'o'
 		if block {
 			readFn()
 		} else {
@@ -196,6 +207,52 @@ func handleInput(text string, node *Node) {
 		fmt.Print(*tcp.GetSocketInfo())
 	} else if len(words) == 1 && words[0] == "h" {
 		fmt.Println(HELP_MSG)
+	} else if len(words) == 3 && words[0] == "sd" {
+		// sd <socket ID> <read|write|both>
+		socketId, err := strconv.Atoi(words[1])
+		option := words[2]
+
+		if err != nil {
+			log.Printf("Invalid socket Id: %s", words[1])
+		} else if !(option == "read" || option == "write" || option == "both") {
+			log.Println("syntax error (type option must be 'read', 'write', or 'both')")
+		} else {
+			fmt.Println(socketId)
+			if option == "read" {
+				fmt.Println("read")
+			} else if option == "write" {
+				fmt.Println("write")
+			} else { // option == "both"
+				fmt.Println("both")
+			}
+		}
+	} else if len(words) == 2 && words[0] == "cl" {
+		// cl <socket ID>
+		socketId, err := strconv.Atoi(words[1])
+		if err != nil {
+			log.Printf("Invalid socket Id: %s", words[1])
+		}
+		fmt.Println(socketId)
+	} else if len(words) == 4 && words[0] == "sf" {
+		// sf <filename> <ip> <port>
+		filename := words[1]
+		foreignIP := words[2]
+		port, err := strconv.Atoi(words[3])
+		if err != nil {
+			log.Printf("Invalid TCP port: %s", words[3])
+			return
+		}
+
+		fmt.Println(filename, foreignIP, port)
+	} else if len(words) == 3 && words[0] == "rf" {
+		// rf <filename> <port>
+		filename := words[1]
+		port, err := strconv.Atoi(words[2])
+		if err != nil {
+			log.Printf("Invalid TCP port: %s", words[2])
+			return
+		}
+		fmt.Println(filename, port)
 	} else {
 		fmt.Println("Unsupported command")
 	}
