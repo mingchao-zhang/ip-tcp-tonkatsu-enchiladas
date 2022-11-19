@@ -72,14 +72,22 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 			sock.foreignWindowSize.Swap(packetWindowSize)
 		}
 	} else {
-		fmt.Println("Old ack received")
+		fmt.Println("In HandlePacket: Old ack received")
 		return
 	}
 
-	// 2. try to write data either in the read buffer or in the heap
+	// 2. check if we need to write to buffer
 	relSeqNum := p.header.SeqNum - sock.foreignInitSeqNum
 
-	if relSeqNum == sock.nextExpectedByte.Load() && len(p.data) > 0 {
+	if relSeqNum < sock.nextExpectedByte.Load() {
+		fmt.Printf("In HandlePacket: relSeqNum: %d, sock.nextExpectedByte: %d\n", relSeqNum, sock.nextExpectedByte.Load())
+		return
+	} else if len(p.data) == 0 {
+		return
+	}
+
+	// 3. try to write data either in the read buffer or in the heap
+	if relSeqNum == sock.nextExpectedByte.Load() {
 		if sock.readBuffer.Free() >= len(p.data) {
 			// write the data to the buffer if there is enough space available
 			sock.readBuffer.Write(p.data)
@@ -92,7 +100,7 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 			fmt.Println("HandlePacket window size not respected")
 			return
 		}
-	} else {
+	} else { // early arrivals
 		// add the packet to the heap of packets
 		log.Println("HandlePacket: Packet arrived out of order: ", p)
 		log.Printf("Expect sequence number: %v; Received: %v", sock.nextExpectedByte, relSeqNum)
@@ -100,17 +108,15 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 		// sock.outOfOrderQueue.Push(p)
 	}
 
-	// 3. send an ack back
+	// 4. send an ack back
 	// increase nextExpectedByte before constructing the header
-	if len(p.data) != 0 {
-		ackPacket := TcpPacket{
-			header: *sock.getAckHeader(),
-			data:   []byte{},
-		}
-		err := sendTcp(sock.conn.foreignIP, ackPacket.Marshal())
-		if err != nil {
-			fmt.Println("handle packet step 3: ", err)
-		}
+	ackPacket := TcpPacket{
+		header: *sock.getAckHeader(),
+		data:   []byte{},
+	}
+	err := sendTcp(sock.conn.foreignIP, ackPacket.Marshal())
+	if err != nil {
+		fmt.Println("handle packet step 4: ", err)
 	}
 }
 

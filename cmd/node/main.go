@@ -191,7 +191,7 @@ func handleInput(text string, node *Node) {
 		} else {
 			go readFn()
 		}
-		fmt.Println(string(payload), block)
+		fmt.Println(string(payload))
 	} else if len(words) == 1 && words[0] == "ls" {
 		fmt.Print(*tcp.GetSocketInfo())
 	} else if len(words) == 1 && words[0] == "h" {
