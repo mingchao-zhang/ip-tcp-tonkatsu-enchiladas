@@ -187,7 +187,15 @@ func handleInput(text string, node *Node) {
 		}
 
 		if block {
-			readFn()
+			bytesRead := 0
+			for bytesRead != bytesToRead {
+				nRead, err := tcp.VRead(socketId, payload)
+				if err != nil {
+					fmt.Printf("Error while reading from socket %v: %v\n", socketId, err)
+					break
+				}
+				bytesRead += nRead
+			}
 		} else {
 			go readFn()
 		}
