@@ -3,7 +3,6 @@ package tcp
 import (
 	"errors"
 	"log"
-	"time"
 )
 
 // we need to write len(buff) bytes from the read buffer to buff
@@ -15,26 +14,21 @@ func VRead(socketId int, buff []byte) (int, error) {
 		return 0, errors.New("v_read() error: Bad file descriptor")
 	}
 	readBuffer := sock.readBuffer
-	var totalBytesRead = 0
-
-	for totalBytesRead < len(buff) {
+	isNotEmpty := sock.readBufferIsNotEmpty
+	sock.readBufferLock.Lock()
+	for {
 		// we wait until there are more bytes to read
 		if readBuffer.IsEmpty() {
-			time.Sleep(READ_WRITE_SLEEP_TIME)
+			// wait on a condition
+			isNotEmpty.Wait()
 		} else {
-			bytesRead, err := readBuffer.Read(buff[totalBytesRead:])
+			bytesRead, err := readBuffer.Read(buff)
+			sock.readBufferLock.Unlock()
 			if err != nil {
 				log.Println("error in VRead: ", err)
-				return totalBytesRead, err
+				return 0, err
 			}
-			totalBytesRead += bytesRead
+			return bytesRead, nil
 		}
 	}
-
-	if totalBytesRead != len(buff) {
-		log.Fatalln("VRead read too many bytes 💀")
-	}
-
-	return totalBytesRead, nil
-
 }

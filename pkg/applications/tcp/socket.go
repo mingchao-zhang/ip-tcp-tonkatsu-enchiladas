@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"sync"
 	"time"
 
 	"github.com/google/netstack/tcpip/header"
@@ -17,8 +18,14 @@ type TcpSocket struct {
 	connState string
 	conn      *TcpConn
 
-	readBuffer  *ringbuffer.RingBuffer
-	writeBuffer *ringbuffer.RingBuffer
+	readBuffer           *ringbuffer.RingBuffer
+	readBufferLock       *sync.Mutex
+	readBufferIsNotEmpty *sync.Cond
+
+	writeBuffer           *ringbuffer.RingBuffer
+	writeBufferLock       *sync.Mutex
+	writeBufferIsNotFull  *sync.Cond
+	WriteBufferIsNotEmpty *sync.Cond
 
 	ch   chan *TcpPacket
 	stop chan bool
@@ -37,14 +44,17 @@ type TcpSocket struct {
 }
 
 func MakeTcpSocket(connState string, tcpConn *TcpConn, foreignInitSeqNum uint32) (*TcpSocket, error) {
-	return &TcpSocket{
+	sock := TcpSocket{
 		sockId: int(nextSockId.Add(1)),
 
 		connState: connState,
 		conn:      tcpConn,
 
-		readBuffer:  ringbuffer.New(BufferSize),
-		writeBuffer: ringbuffer.New(BufferSize),
+		readBuffer:     ringbuffer.New(BufferSize),
+		readBufferLock: &sync.Mutex{},
+
+		writeBuffer:     ringbuffer.New(BufferSize),
+		writeBufferLock: &sync.Mutex{},
 
 		ch:   make(chan *TcpPacket),
 		stop: make(chan bool),
@@ -57,7 +67,13 @@ func MakeTcpSocket(connState string, tcpConn *TcpConn, foreignInitSeqNum uint32)
 		foreignInitSeqNum:  foreignInitSeqNum,
 		largestAckReceived: atomic.NewUint32(0),
 		foreignWindowSize:  atomic.NewUint32(0),
-	}, nil
+	}
+
+	sock.readBufferIsNotEmpty = sync.NewCond(sock.readBufferLock)
+	sock.writeBufferIsNotFull = sync.NewCond(sock.writeBufferLock)
+	sock.WriteBufferIsNotEmpty = sync.NewCond(sock.writeBufferLock)
+
+	return &sock, nil
 }
 
 func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
@@ -122,43 +138,67 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 
 func (sock *TcpSocket) HandleWrites() {
 	writeBuffer := sock.writeBuffer
-	if writeBuffer.IsEmpty() {
-		return
-	}
+	writeBufferLock := sock.writeBufferLock
+	isNotFull := sock.writeBufferIsNotFull
+	isNotEmpty := sock.WriteBufferIsNotEmpty
 
-	// calculate how many bytes to send in total
-	sizeToWrite := uint32(min(int(sock.foreignWindowSize.Load()), writeBuffer.Length()))
+	for {
+		// TODO: zero window polling!!!
+		// if sock.foreignWindowSize.Load() == 0 {
 
-	// get all the bytes to send
-	payload := make([]byte, sizeToWrite)
-	writeBuffer.Read(payload)
-	fmt.Println("In handlewrites payload: ", string(payload))
-
-	// split bytes into segments, construct tcp packets and send them
-	conn := sock.conn
-	for sizeToWrite > 0 {
-		segmentSize := uint32(min(TcpMaxSegmentSize, int(sizeToWrite)))
-
-		// get hdr
-		// increase numBytesSent after constructing the header
-		ackHdr := sock.getAckHeader()
-		sock.numBytesSent.Add(segmentSize)
-
-		// add payload
-		ackPacket := TcpPacket{
-			header: *ackHdr,
-			data:   payload[:segmentSize],
-		}
-		payload = payload[segmentSize:]
-
-		packetBytes := ackPacket.Marshal()
-		err := sendTcp(conn.foreignIP, packetBytes)
-		if err != nil {
-			fmt.Println("Error in handleWrites from SendMsgToDestIP: ", err)
-			return
+		// }
+		writeBufferLock.Lock()
+		for writeBuffer.IsEmpty() {
+			// wait till some vwrite call signals that the buffer has data in it
+			isNotEmpty.Wait()
 		}
 
-		sizeToWrite -= segmentSize
+		// we know here that there is data to send
+
+		// calculate how many bytes to send in total
+		// either less than the
+		sizeToWrite := uint32(min(int(sock.foreignWindowSize.Load()), writeBuffer.Length()))
+
+		// get all the bytes to send
+		if sizeToWrite == 0 {
+
+		}
+		payload := make([]byte, sizeToWrite)
+		writeBuffer.Read(payload)
+
+		// signal waiting vwrite calls that the buffer is no longer full
+		isNotFull.Broadcast()
+		sock.writeBufferLock.Unlock()
+
+		// we may have read some data
+		fmt.Println("In handlewrites payload: ", string(payload))
+
+		// split bytes into segments, construct tcp packets and send them
+		conn := sock.conn
+		for sizeToWrite > 0 {
+			segmentSize := uint32(min(TcpMaxSegmentSize, int(sizeToWrite)))
+
+			// get hdr
+			// increase numBytesSent after constructing the header
+			ackHdr := sock.getAckHeader()
+			sock.numBytesSent.Add(segmentSize)
+
+			// add payload
+			ackPacket := TcpPacket{
+				header: *ackHdr,
+				data:   payload[:segmentSize],
+			}
+			payload = payload[segmentSize:]
+
+			packetBytes := ackPacket.Marshal()
+			err := sendTcp(conn.foreignIP, packetBytes)
+			if err != nil {
+				fmt.Println("Error in handleWrites from SendMsgToDestIP: ", err)
+				return
+			}
+
+			sizeToWrite -= segmentSize
+		}
 	}
 }
 
