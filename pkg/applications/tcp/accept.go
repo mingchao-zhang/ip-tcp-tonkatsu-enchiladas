@@ -98,7 +98,7 @@ func (l *TcpListener) VAccept() (*TcpConn, error) {
 				// check if the appropriate number was acked
 				sock.connState = ESTABLISHED
 				fmt.Println("we did it :partyemoji:")
-				sock.foreignWindowSize.Swap(uint32(p.header.WindowSize))
+				sock.foreignWindowSize.Store(uint32(p.header.WindowSize))
 				fmt.Printf("In Accept %s\n", sock)
 			}
 
