@@ -49,18 +49,44 @@ func MakeTcpSocket(connState string, tcpConn *TcpConn, foreignInitSeqNum uint32)
 		ch:   make(chan *TcpPacket),
 		stop: make(chan bool),
 
-		myInitSeqNum:      rand.Uint32(),
-		foreignInitSeqNum: foreignInitSeqNum,
-		numBytesSent:      atomic.NewUint32(0),
-		nextExpectedByte:  atomic.NewUint32(0),
+		myInitSeqNum:     rand.Uint32(),
+		numBytesSent:     atomic.NewUint32(0),
+		nextExpectedByte: atomic.NewUint32(0),
+
+		// foreign numbers
+		foreignInitSeqNum:  foreignInitSeqNum,
+		largestAckReceived: atomic.NewUint32(0),
+		foreignWindowSize:  atomic.NewUint32(0),
 	}, nil
 }
 
 func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 	// what could go wrong if we have multiple packets being handled at the same time?
-	// 1. try to write data either in the read buffer or in the heap
+	// 1. modify largestAckReceived and foreignWindowSize
+	packetWindowSize := uint32(p.header.WindowSize)
+	if p.header.AckNum > sock.largestAckReceived.Load() {
+		sock.largestAckReceived.Swap(p.header.AckNum)
+		sock.foreignWindowSize.Swap(packetWindowSize)
+	} else if p.header.AckNum == sock.largestAckReceived.Load() {
+		if sock.foreignWindowSize.Load() < packetWindowSize {
+			sock.foreignWindowSize.Swap(packetWindowSize)
+		}
+	} else {
+		fmt.Println("In HandlePacket: Old ack received")
+		return
+	}
+
+	// 2. check if we need to write to buffer
 	relSeqNum := p.header.SeqNum - sock.foreignInitSeqNum
 
+	if relSeqNum < sock.nextExpectedByte.Load() {
+		fmt.Printf("In HandlePacket: relSeqNum: %d, sock.nextExpectedByte: %d\n", relSeqNum, sock.nextExpectedByte.Load())
+		return
+	} else if len(p.data) == 0 {
+		return
+	}
+
+	// 3. try to write data either in the read buffer or in the heap
 	if relSeqNum == sock.nextExpectedByte.Load() {
 		if sock.readBuffer.Free() >= len(p.data) {
 			// write the data to the buffer if there is enough space available
@@ -74,7 +100,7 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 			fmt.Println("HandlePacket window size not respected")
 			return
 		}
-	} else {
+	} else { // early arrivals
 		// add the packet to the heap of packets
 		log.Println("HandlePacket: Packet arrived out of order: ", p)
 		log.Printf("Expect sequence number: %v; Received: %v", sock.nextExpectedByte, relSeqNum)
@@ -82,34 +108,16 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 		// sock.outOfOrderQueue.Push(p)
 	}
 
-	// 2. modify largestAckReceived and foreignWindowSize
-	packetWindowSize := uint32(p.header.WindowSize)
-	if p.header.AckNum > sock.largestAckReceived.Load() {
-		sock.largestAckReceived.Swap(p.header.AckNum)
-		sock.foreignWindowSize.Swap(packetWindowSize)
-	} else if p.header.AckNum > sock.largestAckReceived.Load() {
-		if sock.foreignWindowSize.Load() < packetWindowSize {
-			sock.foreignWindowSize.Swap(packetWindowSize)
-		}
-	} else {
-		fmt.Println("Old invalid packets")
-	}
-
-	// 3. send an ack back
+	// 4. send an ack back
 	// increase nextExpectedByte before constructing the header
 	ackPacket := TcpPacket{
 		header: *sock.getAckHeader(),
 		data:   []byte{},
 	}
-
-	state.fwdTable.Lock.RLock()
-	state.fwdTable.SendMsgToDestIP(
-		sock.conn.foreignIP,
-		TcpProtocolNum,
-		ackPacket.Marshal(),
-	)
-	state.fwdTable.Lock.RUnlock()
-
+	err := sendTcp(sock.conn.foreignIP, ackPacket.Marshal())
+	if err != nil {
+		fmt.Println("handle packet step 4: ", err)
+	}
 }
 
 func (sock *TcpSocket) HandleWrites() {
@@ -124,6 +132,7 @@ func (sock *TcpSocket) HandleWrites() {
 	// get all the bytes to send
 	payload := make([]byte, sizeToWrite)
 	writeBuffer.Read(payload)
+	fmt.Println("In handlewrites payload: ", string(payload))
 
 	// split bytes into segments, construct tcp packets and send them
 	conn := sock.conn
@@ -143,9 +152,7 @@ func (sock *TcpSocket) HandleWrites() {
 		payload = payload[segmentSize:]
 
 		packetBytes := ackPacket.Marshal()
-		state.fwdTable.Lock.RLock()
-		err := state.fwdTable.SendMsgToDestIP(conn.foreignIP, TcpProtocolNum, packetBytes)
-		state.fwdTable.Lock.RUnlock()
+		err := sendTcp(conn.foreignIP, packetBytes)
 		if err != nil {
 			fmt.Println("Error in handleWrites from SendMsgToDestIP: ", err)
 			return
@@ -177,7 +184,7 @@ func (sock *TcpSocket) getAckHeader() *header.TCPFields {
 	return &header.TCPFields{
 		SrcPort:    sock.conn.localPort,
 		DstPort:    sock.conn.foreignPort,
-		SeqNum:     sock.myInitSeqNum + sock.numBytesSent.Load(),
+		SeqNum:     sock.myInitSeqNum + sock.numBytesSent.Load() + 1,
 		AckNum:     sock.nextExpectedByte.Load() + sock.foreignInitSeqNum,
 		DataOffset: TcpHeaderLen,
 		Flags:      header.TCPFlagAck, // what flag should we set?
@@ -186,4 +193,19 @@ func (sock *TcpSocket) getAckHeader() *header.TCPFields {
 		Checksum:      0,
 		UrgentPointer: 0,
 	}
+}
+
+func (sock *TcpSocket) String() string {
+	res := "\n"
+	res += fmt.Sprintf("sockId: %d\n", sock.sockId)
+	res += fmt.Sprintf("connState: %s\n", sock.connState)
+	res += fmt.Sprintf("myInitSeqNum: %d\n", sock.myInitSeqNum)
+	res += fmt.Sprintf("numBytesSent: %d\n", sock.numBytesSent.Load())
+	res += fmt.Sprintf("nextExpectedByte: %d\n", sock.nextExpectedByte.Load())
+	res += fmt.Sprintf("foreignInitSeqNum: %d\n", sock.foreignInitSeqNum)
+	res += fmt.Sprintf("largestAckReceived: %d\n", sock.largestAckReceived.Load())
+	res += fmt.Sprintf("foreignWindowSize: %d\n", sock.foreignWindowSize.Load())
+	res += ": %\n"
+
+	return res
 }

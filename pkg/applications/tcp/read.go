@@ -7,7 +7,7 @@ import (
 )
 
 // we need to write len(buff) bytes from the read buffer to buff
-func (conn *TcpConn) VRead(socketId int, buff []byte) (int, error) {
+func VRead(socketId int, buff []byte) (int, error) {
 	// TODO: validate TCP checksum
 
 	sock := getSocketById(socketId)

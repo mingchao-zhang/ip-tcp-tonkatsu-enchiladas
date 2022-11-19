@@ -3,6 +3,7 @@ package tcp
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/netstack/tcpip/header"
 )
@@ -62,6 +63,7 @@ func (l *TcpListener) VAccept() (*TcpConn, error) {
 			Checksum:      0,
 			UrgentPointer: 0,
 		}
+		sock.nextExpectedByte.Store(1)
 
 		synAckPacket := TcpPacket{
 			header: tcpHdr,
@@ -69,33 +71,50 @@ func (l *TcpListener) VAccept() (*TcpConn, error) {
 		}
 
 		packetBytes := synAckPacket.Marshal()
-
-		state.fwdTable.Lock.RLock()
-		err = state.fwdTable.SendMsgToDestIP(conn.foreignIP, TcpProtocolNum, packetBytes)
-		state.fwdTable.Lock.RUnlock()
+		err = sendTcp(conn.foreignIP, packetBytes)
 		if err != nil {
 			deleteConnSafe(&conn)
 			return nil, err
 		}
 		sock.connState = SYN_SENT
 
+		timeout := time.After(time.Second * 2)
 		select {
 		case p := <-sock.ch:
 			if (p.header.Flags & header.TCPFlagAck) != 0 {
+				// we got an ack from the client
+				if p.header.SeqNum-sock.foreignInitSeqNum != 1 {
+					fmt.Println("Received unexpected sequence number")
+					deleteConnSafe(&conn)
+					return nil, errors.New("unexpected sequence number received")
+				}
+				if p.header.AckNum-sock.myInitSeqNum != 1 {
+					fmt.Println("Received unexpected ack number")
+					deleteConnSafe(&conn)
+					return nil, errors.New("unexpected ack number received")
+				}
+				sock.nextExpectedByte.Store(1)
 				// at this point we have established a connection
 				// check if the appropriate number was acked
 				sock.connState = ESTABLISHED
 				fmt.Println("we did it :partyemoji:")
+				sock.foreignWindowSize.Swap(uint32(p.header.WindowSize))
+				fmt.Printf("In Accept %s\n", sock)
 			}
+
 			// TODO: When is data pushed into l.stop?
 			// when the listener calls close(),
 			// removes the listener from listeners
 			// and all the active connections from the socket table
+		case <-timeout:
+			fmt.Println("timed out")
+			deleteConnSafe(&conn)
+			return nil, errors.New("connection timed out")
 		case <-l.stop:
 			deleteConnSafe(&conn)
 			return nil, errors.New("connection closed")
 		}
-
+		fmt.Println("here")
 		go sock.HandleConnection()
 
 		return &conn, nil

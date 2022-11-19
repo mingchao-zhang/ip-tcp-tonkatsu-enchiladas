@@ -1,5 +1,7 @@
 package tcp
 
+import "ip/pkg/ipinterface"
+
 // Safe
 func getSocketById(id int) *TcpSocket {
 	state.lock.Lock()
@@ -42,4 +44,12 @@ func min(a int, b int) int {
 	} else {
 		return b
 	}
+}
+
+func sendTcp(foreignIP ipinterface.IntIP, packetBytes []byte) error {
+	state.fwdTable.Lock.RLock()
+	defer state.fwdTable.Lock.RUnlock()
+
+	err := state.fwdTable.SendMsgToDestIP(foreignIP, TcpProtocolNum, packetBytes)
+	return err
 }

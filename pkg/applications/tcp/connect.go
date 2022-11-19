@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	link "ip/pkg/ipinterface"
+	"time"
 
 	"github.com/google/netstack/tcpip/header"
 )
@@ -53,9 +54,7 @@ func VConnect(foreignIP link.IntIP, foreignPort uint16) (*TcpConn, error) {
 	}
 	packetBytes := synPacket.Marshal()
 
-	state.fwdTable.Lock.RLock()
-	err = state.fwdTable.SendMsgToDestIP(foreignIP, TcpProtocolNum, packetBytes)
-	state.fwdTable.Lock.RUnlock()
+	err = sendTcp(foreignIP, packetBytes)
 	if err != nil {
 		deleteConnSafe(&conn)
 		return nil, err
@@ -63,6 +62,7 @@ func VConnect(foreignIP link.IntIP, foreignPort uint16) (*TcpConn, error) {
 
 	// wait for a SYN-ACK
 	// possibly also wait on stop
+	timeout := time.After(time.Second * 2)
 	select {
 	case packet := <-sock.ch:
 		receivedHdr := packet.header
@@ -70,9 +70,13 @@ func VConnect(foreignIP link.IntIP, foreignPort uint16) (*TcpConn, error) {
 		if (receivedHdr.Flags&header.TCPFlagSyn == 0) || (receivedHdr.Flags&header.TCPFlagAck == 0) {
 			deleteConnSafe(&conn)
 			return nil, errors.New("connect did not receive both SYN and ACK during handshake")
+		} else if packet.header.AckNum-sock.myInitSeqNum != 1 {
+			deleteConnSafe(&conn)
+			return nil, errors.New("in connect: get incorrect ack number in the syn-ack packet")
 		}
 
 		sock.foreignInitSeqNum = receivedHdr.SeqNum
+		sock.nextExpectedByte.Store(1)
 
 		// send ACK
 		tcpHdr = header.TCPFields{
@@ -92,9 +96,7 @@ func VConnect(foreignIP link.IntIP, foreignPort uint16) (*TcpConn, error) {
 			data:   make([]byte, 0),
 		}
 		packetBytes = ackPacket.Marshal()
-		state.fwdTable.Lock.RLock()
-		err = state.fwdTable.SendMsgToDestIP(foreignIP, TcpProtocolNum, packetBytes)
-		state.fwdTable.Lock.RUnlock()
+		err = sendTcp(foreignIP, packetBytes)
 		if err != nil {
 			deleteConnSafe(&conn)
 			return nil, err
@@ -102,8 +104,15 @@ func VConnect(foreignIP link.IntIP, foreignPort uint16) (*TcpConn, error) {
 
 		// conn established
 		sock.connState = ESTABLISHED
+		sock.foreignWindowSize.Swap(uint32(packet.header.WindowSize))
+		fmt.Printf("In Connect: %s\n", sock)
 		go sock.HandleConnection()
 		return &conn, nil
+
+	case <-timeout:
+		fmt.Println("timed out")
+		deleteConnSafe(&conn)
+		return nil, errors.New("connection timed out")
 	case <-sock.stop:
 		deleteConnSafe(&conn)
 		return nil, errors.New("connection closed")
