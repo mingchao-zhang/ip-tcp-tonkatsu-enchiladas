@@ -2,54 +2,58 @@ package main
 
 import (
 	"bufio"
-	"container/heap"
 	"fmt"
-	"ip/pkg/applications/tcp"
 	"log"
 	"os"
 )
 
-func testHeap() {
-	pq := make(tcp.PriorityQueue, 3)
+// func testHeap() {
+// 	// array of item pointers
+// 	pq := make(tcp.PriorityQueue, 3)
 
-	banana := "banana"
-	pq[0] = &tcp.Item{
-		Value:    &banana,
-		Priority: 3,
-	}
+// 	// insert a bunch of values
+// 	banana := "banana"
+// 	pq[0] = &tcp.Item{
+// 		Value:    &banana,
+// 		Priority: 3,
+// 		// we don't need to define index
+// 	}
 
-	apple := "apple"
-	pq[1] = &tcp.Item{
-		Value:    &apple,
-		Priority: 2,
-	}
+// 	apple := "apple"
+// 	pq[1] = &tcp.Item{
+// 		Value:    &apple,
+// 		Priority: 2,
+// 	}
 
-	pear := "pear"
-	pq[2] = &tcp.Item{
-		Value:    &pear,
-		Priority: 4,
-	}
+// 	pear := "pear"
+// 	pq[2] = &tcp.Item{
+// 		Value:    &pear,
+// 		Priority: 4,
+// 	}
 
-	heap.Init(&pq)
+// 	heap.Init(&pq)
 
-	// Insert a new item and then modify its priority.
-	orange := "orange"
-	item := &tcp.Item{
-		Value:    &orange,
-		Priority: 1,
-	}
-	heap.Push(&pq, item)
-	pq.Update(item, item.Value, 5)
+// 	// Insert a new item and then modify its priority.
+// 	orange := "orange"
+// 	item := &tcp.Item{
+// 		Value:    &orange,
+// 		Priority: 1,
+// 	}
+// 	// mostly gonna use this
+// 	heap.Push(&pq, item)
 
-	// Take the items out; they arrive in decreasing priority order.
-	for pq.Len() > 0 {
-		item := heap.Pop(&pq).(*tcp.Item)
-		fmt.Printf("%.2d:%s ", item.Priority, *item.Value)
-	}
-	fmt.Println("")
+// 	// not useful to us
+// 	pq.Update(item, item.Value, 5)
 
-	return
-}
+// 	// Take the items out; they arrive in decreasing priority order.
+// 	for pq.Len() > 0 {
+// 		item := heap.Pop(&pq).(*tcp.Item)
+// 		fmt.Printf("%.2d:%s ", item.Priority, *item.Value)
+// 	}
+
+// 	fmt.Println("")
+// 	return
+// }
 
 func main() {
 	// testHeap()
