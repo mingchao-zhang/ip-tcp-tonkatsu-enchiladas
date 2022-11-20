@@ -99,8 +99,9 @@ func (ft *FwdTable) SendMsgToDestIP(destIP link.IntIP, procotol uint8, msg []byt
 
 	// check if the destIP is in the fwdTable
 	if !ok {
-		fwdEntry, ok := ft.EntryMap[destIP]
-		if ok {
+		fwdEntry, isInFwdTable := ft.EntryMap[destIP]
+		if isInFwdTable {
+			ok = true
 			nextHopInterface, _ = ft.getInterfaceByDestIp(fwdEntry.Next)
 		}
 	}
