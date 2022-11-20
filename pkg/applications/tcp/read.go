@@ -2,7 +2,6 @@ package tcp
 
 import (
 	"errors"
-	"fmt"
 	"log"
 )
 
@@ -21,9 +20,7 @@ func VRead(socketId int, buff []byte) (int, error) {
 		// we wait until there are more bytes to read
 		if readBuffer.IsEmpty() {
 			// wait on a condition
-			fmt.Println("waiting on value in buffer")
 			isNotEmpty.Wait()
-			fmt.Println("Awoken")
 		} else {
 			bytesRead, err := readBuffer.Read(buff)
 			sock.readBufferLock.Unlock()

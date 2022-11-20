@@ -97,9 +97,7 @@ func (l *TcpListener) VAccept() (*TcpConn, error) {
 				// at this point we have established a connection
 				// check if the appropriate number was acked
 				sock.connState = ESTABLISHED
-				fmt.Println("we did it :partyemoji:")
 				sock.foreignWindowSize.Store(uint32(p.header.WindowSize))
-				fmt.Printf("In Accept %s\n", sock)
 			}
 
 			// TODO: When is data pushed into l.stop?
@@ -114,7 +112,6 @@ func (l *TcpListener) VAccept() (*TcpConn, error) {
 			deleteConnSafe(&conn)
 			return nil, errors.New("connection closed")
 		}
-		fmt.Println("here")
 		go sock.HandleConnection()
 
 		return &conn, nil

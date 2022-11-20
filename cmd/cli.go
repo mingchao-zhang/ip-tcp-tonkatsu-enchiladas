@@ -83,18 +83,24 @@ func handleReadString(words []string) {
 
 	payload := make([]byte, bytesToRead)
 
-	readFn := func() {
-		tcp.VRead(socketId, payload)
-		fmt.Println(string(payload))
-	}
-
 	// v_read() on 2 bytes returned 1; contents of buffer: 'o'
 	if block {
-		readFn()
+		totalBytesRead := 0
+		for totalBytesRead < bytesToRead {
+			bytesRead, err := tcp.VRead(socketId, payload[totalBytesRead:])
+			if err != nil {
+				fmt.Println("Error while reading:", err)
+			}
+			totalBytesRead += bytesRead
+		}
+		fmt.Println(string(payload))
 	} else {
-		go readFn()
+		bytesRead, err := tcp.VRead(socketId, payload)
+		if err != nil {
+			fmt.Println("Error while reading:", err)
+		}
+		fmt.Println(string(payload[:bytesRead]))
 	}
-	fmt.Println(string(payload))
 }
 
 func handleShutdownTcpSocket(words []string) {

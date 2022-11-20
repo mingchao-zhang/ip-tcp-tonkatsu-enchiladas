@@ -110,9 +110,11 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 			bytesWritten, err := sock.readBuffer.Write(p.data)
 			if err != nil {
 				fmt.Println("HandlePacket: Error while writing to the read buffer", err)
+				return
 			} else {
 				if bytesWritten != len(p.data) {
 					fmt.Println("HandlePacket: Could not write everything to the read buffer - This should not be happening!!!")
+					return
 				}
 				sock.readBufferIsNotEmpty.Broadcast()
 				sock.readBufferLock.Unlock()
@@ -186,9 +188,6 @@ func (sock *TcpSocket) HandleWrites() {
 		// signal waiting vwrite calls that the buffer is no longer full
 		isNotFull.Broadcast()
 		writeBufferLock.Unlock()
-
-		// we may have read some data
-		fmt.Println("In handlewrites payload: ", string(payload))
 
 		// split bytes into segments, construct tcp packets and send them
 		conn := sock.conn

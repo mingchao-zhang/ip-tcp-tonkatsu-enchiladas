@@ -105,7 +105,6 @@ func VConnect(foreignIP link.IntIP, foreignPort uint16) (*TcpConn, error) {
 		// conn established
 		sock.connState = ESTABLISHED
 		sock.foreignWindowSize.Store(uint32(packet.header.WindowSize))
-		fmt.Printf("In Connect: %s\n", sock)
 		go sock.HandleConnection()
 		return &conn, nil
 
