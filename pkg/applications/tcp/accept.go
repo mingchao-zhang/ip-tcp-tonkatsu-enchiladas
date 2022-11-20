@@ -39,6 +39,9 @@ func (l *TcpListener) VAccept() (*TcpConn, error) {
 			state.lock.Unlock()
 			errMsg := fmt.Sprintf("Packet dropped in VAccept: %s: %d has already been connected\n", conn.foreignIP, conn.foreignPort)
 			return nil, errors.New(errMsg)
+		} else if !isValidTcpCheckSum(&p.header, conn.foreignIP.NetIP(), conn.localIP.NetIP(), p.data) {
+			state.lock.Unlock()
+			return nil, errors.New("invalid checksum in Vaccept")
 		}
 
 		sock, err := MakeTcpSocket(SYN_RECEIVED, &conn, p.header.SeqNum)
@@ -65,9 +68,11 @@ func (l *TcpListener) VAccept() (*TcpConn, error) {
 		}
 		sock.nextExpectedByte.Store(1)
 
+		payload := make([]byte, 0)
+		tcpHdr.Checksum = computeTCPChecksum(&tcpHdr, conn.localIP.NetIP(), conn.foreignIP.NetIP(), payload)
 		synAckPacket := TcpPacket{
 			header: tcpHdr,
-			data:   make([]byte, 0),
+			data:   payload,
 		}
 
 		packetBytes := synAckPacket.Marshal()
