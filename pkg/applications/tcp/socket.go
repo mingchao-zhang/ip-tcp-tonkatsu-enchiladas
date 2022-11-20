@@ -105,7 +105,7 @@ func (sock *TcpSocket) writeIntoReadBuffer(p *TcpPacket) error {
 		if bytesWritten != len(p.data) {
 			fmt.Println("HandlePacket: Could not write everything to the read buffer - This should not be happening!!!")
 			sock.readBufferLock.Unlock()
-			return errors.New("we should have enough space in the buffer!!!")
+			return errors.New("we should have enough space in the buffer :(")
 		}
 		sock.readBufferIsNotEmpty.Broadcast()
 		sock.readBufferLock.Unlock()
@@ -229,8 +229,9 @@ func (sock *TcpSocket) HandleWrites() {
 	isNotEmpty := sock.writeBufferIsNotEmpty
 
 	for {
-		// TODO: zero window polling!!!
-		for sock.foreignWindowSize.Load() == sock.inFlightPacketSize.Load() {
+		// TODO: zero window probing!!!
+		// either we have sent enough packets, or the receiver can't take any more packets
+		for sock.foreignWindowSize.Load() == sock.inFlightPacketSize.Load() || sock.foreignWindowSize.Load() == 0 {
 			// we need to keep sending 1 byte until
 			time.Sleep(10 * time.Millisecond)
 			// write logic to keep sending one byte until we get acks
