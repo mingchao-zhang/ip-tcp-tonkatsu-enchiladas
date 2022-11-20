@@ -2,6 +2,7 @@ package tcp
 
 import (
 	"container/heap"
+	"container/list"
 	"errors"
 	"fmt"
 	"log"
@@ -30,8 +31,8 @@ type TcpSocket struct {
 	writeBufferLock       *sync.Mutex
 	writeBufferIsNotFull  *sync.Cond
 	writeBufferIsNotEmpty *sync.Cond
-	inFlightQueue         PriorityQueue
-	inFlightQueueLock     *sync.Mutex
+	inFlightList          *list.List
+	inFlightListLock      *sync.Mutex
 	inFlightPacketSize    *atomic.Uint32
 
 	ch   chan *TcpPacket
@@ -46,6 +47,9 @@ type TcpSocket struct {
 	foreignInitSeqNum  uint32         // raw
 	largestAckReceived *atomic.Uint32 // raw
 	foreignWindowSize  *atomic.Uint32
+
+	//roundtrip time
+	srtt time.Duration
 }
 
 func MakeTcpSocket(connState string, tcpConn *TcpConn, foreignInitSeqNum uint32) (*TcpSocket, error) {
@@ -63,8 +67,8 @@ func MakeTcpSocket(connState string, tcpConn *TcpConn, foreignInitSeqNum uint32)
 
 		writeBuffer:        ringbuffer.New(BufferSize),
 		writeBufferLock:    &sync.Mutex{},
-		inFlightQueue:      PriorityQueue{},
-		inFlightQueueLock:  &sync.Mutex{},
+		inFlightList:       &list.List{},
+		inFlightListLock:   &sync.Mutex{},
 		inFlightPacketSize: atomic.NewUint32(0),
 
 		ch:   make(chan *TcpPacket),
@@ -78,13 +82,14 @@ func MakeTcpSocket(connState string, tcpConn *TcpConn, foreignInitSeqNum uint32)
 		foreignInitSeqNum:  foreignInitSeqNum,
 		largestAckReceived: atomic.NewUint32(0),
 		foreignWindowSize:  atomic.NewUint32(0),
+
+		srtt: time.Microsecond * 20,
 	}
 
 	sock.readBufferIsNotEmpty = sync.NewCond(sock.readBufferLock)
 	sock.writeBufferIsNotFull = sync.NewCond(sock.writeBufferLock)
 	sock.writeBufferIsNotEmpty = sync.NewCond(sock.writeBufferLock)
 	heap.Init(&sock.earlyArrivalQueue)
-	heap.Init(&sock.inFlightQueue)
 
 	return &sock, nil
 }
@@ -112,75 +117,108 @@ func (sock *TcpSocket) writeIntoReadBuffer(p *TcpPacket) error {
 
 func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 	// what could go wrong if we have multiple packets being handled at the same time?
-	// 1. modify largestAckReceived and foreignWindowSize
-	packetWindowSize := uint32(p.header.WindowSize)
-	if p.header.AckNum > sock.largestAckReceived.Load() {
-		sock.largestAckReceived.Store(p.header.AckNum)
-		sock.foreignWindowSize.Store(packetWindowSize)
-	} else if p.header.AckNum == sock.largestAckReceived.Load() {
-		if sock.foreignWindowSize.Load() < packetWindowSize {
+
+	// validate checksum in the packet
+	tcpHdr := p.header
+	if !isValidTcpCheckSum(&tcpHdr, sock.conn.foreignIP.NetIP(), sock.conn.localIP.NetIP(), p.data) {
+		fmt.Println("invalid checksum in handle packet")
+		return
+	}
+
+	// we need to check what packets can be removed from the in flight queue based on the ack number of the packet
+	if tcpHdr.Flags == header.TCPFlagAck {
+		// 1. modify largestAckReceived and foreignWindowSize
+		packetWindowSize := uint32(tcpHdr.WindowSize)
+		if tcpHdr.AckNum > sock.largestAckReceived.Load() {
+
+			sock.inFlightListLock.Lock()
 			sock.foreignWindowSize.Store(packetWindowSize)
-		}
-	} else {
-		fmt.Println("In HandlePacket: Old ack received")
-		return
-	}
+			sock.largestAckReceived.Store(tcpHdr.AckNum)
 
-	// 2. check if we need to write to buffer
-	relSeqNum := p.header.SeqNum - sock.foreignInitSeqNum
+			relLargestAckNum := sock.largestAckReceived.Load() - sock.myInitSeqNum
 
-	if relSeqNum < sock.nextExpectedByte.Load() {
-		fmt.Printf("In HandlePacket: relSeqNum: %d, sock.nextExpectedByte: %d\n", relSeqNum, sock.nextExpectedByte.Load())
-		return
-	} else if len(p.data) == 0 {
-		return
-	}
+			inFlight := sock.inFlightList
 
-	// 3. try to write data either in the read buffer or in the heap
-	if relSeqNum == sock.nextExpectedByte.Load() {
-		if sock.readBuffer.Free() >= len(p.data) {
-			// write the data to the buffer if there is enough space available
-			sock.writeIntoReadBuffer(p)
-			// tell waiting readers that it is party time
-
-			// TODO: check if any early arrivals can be added to the read buffer, and
-			// lock before manipulating early arrivals
-			sock.earlyArrivalQueueLock.Lock()
-			for sock.earlyArrivalQueue.Len() != 0 && sock.earlyArrivalQueue[0].Priority == int(sock.nextExpectedByte.Load()) {
-				smallest := sock.earlyArrivalQueue[0].Value
-				sock.earlyArrivalQueue.Pop()
-				sock.writeIntoReadBuffer(smallest)
+			// Maybe change '<=' to '<'
+			for inFlight.Len() != 0 {
+				item := inFlight.Front().Value.(*TcpPacketItem)
+				if item.Priority > int(relLargestAckNum) {
+					break
+				}
+				sock.inFlightPacketSize.Sub(uint32(len(item.Value.data)))
+				inFlight.Remove(inFlight.Front())
 			}
-			sock.earlyArrivalQueueLock.Unlock()
+			sock.inFlightListLock.Unlock()
+
+		} else if tcpHdr.AckNum == sock.largestAckReceived.Load() {
+			if sock.foreignWindowSize.Load() < packetWindowSize {
+				sock.foreignWindowSize.Store(packetWindowSize)
+			}
 		} else {
-			// this ideally should not happen
-			// drop the packet
-			fmt.Println("HandlePacket window size not respected")
+			fmt.Println("In HandlePacket: Old ack received")
 			return
 		}
-	} else { // early arrivals
-		// add the packet to the heap of packets
-		log.Println("HandlePacket: Packet arrived out of order: ", p)
-		log.Printf("Expect sequence number: %v; Received: %v", sock.nextExpectedByte, relSeqNum)
 
-		// add it to the out of order queue
-		sock.earlyArrivalQueue.Push(&TcpPacketItem{
-			Value:    p,
-			Priority: int(relSeqNum),
-		})
-		sock.earlyArrivePacketSize.Add(uint32(len(p.data)))
-		// sock.outOfOrderQueue.Push(p)
-	}
+		// 2. check if we need to write to buffer
+		relSeqNum := tcpHdr.SeqNum - sock.foreignInitSeqNum
 
-	// 4. send an ack back
-	// increase nextExpectedByte before constructing the header
-	ackPacket := TcpPacket{
-		header: *sock.getAckHeader(),
-		data:   []byte{},
-	}
-	err := sendTcp(sock.conn.foreignIP, ackPacket.Marshal())
-	if err != nil {
-		fmt.Println("handle packet step 4: ", err)
+		if relSeqNum < sock.nextExpectedByte.Load() {
+			fmt.Printf("In HandlePacket: relSeqNum: %d, sock.nextExpectedByte: %d\n", relSeqNum, sock.nextExpectedByte.Load())
+			return
+		} else if len(p.data) == 0 {
+			return
+		}
+
+		// 3. try to write data either in the read buffer or in the heap
+		if relSeqNum == sock.nextExpectedByte.Load() {
+			if sock.readBuffer.Free() >= len(p.data) {
+				// write the data to the buffer if there is enough space available
+				sock.writeIntoReadBuffer(p)
+				// tell waiting readers that it is party time
+
+				// TODO: check if any early arrivals can be added to the read buffer, and
+				// lock before manipulating early arrivals
+				sock.earlyArrivalQueueLock.Lock()
+				for sock.earlyArrivalQueue.Len() != 0 && sock.earlyArrivalQueue[0].Priority == int(sock.nextExpectedByte.Load()) {
+					smallest := sock.earlyArrivalQueue[0].Value
+					sock.earlyArrivalQueue.Pop()
+					sock.writeIntoReadBuffer(smallest)
+				}
+				sock.earlyArrivalQueueLock.Unlock()
+			} else {
+				// this ideally should not happen
+				// drop the packet
+				fmt.Println("HandlePacket window size not respected")
+				return
+			}
+		} else { // early arrivals
+			// add the packet to the heap of packets
+			log.Println("HandlePacket: Packet arrived out of order: ", p)
+			log.Printf("Expect sequence number: %v; Received: %v", sock.nextExpectedByte, relSeqNum)
+
+			// add it to the out of order queue
+			sock.earlyArrivalQueue.Push(&TcpPacketItem{
+				Value:    p,
+				Priority: int(relSeqNum),
+			})
+			sock.earlyArrivePacketSize.Add(uint32(len(p.data)))
+		}
+
+		// 4. send an ack back
+		// increase nextExpectedByte before constructing the header
+		ackHdr := *sock.getAckHeader()
+		payload := make([]byte, 0)
+		ackHdr.Checksum = computeTCPChecksum(&ackHdr, sock.conn.localIP.NetIP(), sock.conn.foreignIP.NetIP(), payload)
+		ackPacket := TcpPacket{
+			header: ackHdr,
+			data:   payload,
+		}
+		err := sendTcp(sock.conn.foreignIP, ackPacket.Marshal())
+		if err != nil {
+			fmt.Println("handle packet step 4: ", err)
+		}
+	} else {
+		fmt.Println("should not happen right now")
 	}
 }
 
@@ -192,12 +230,10 @@ func (sock *TcpSocket) HandleWrites() {
 
 	for {
 		// TODO: zero window polling!!!
-		// if sock.foreignWindowSize.Load() == 0 {
-
-		// }
-		for sock.foreignWindowSize.Load() == 0 {
-			fmt.Println("Zero window probing should happen here")
-			time.Sleep(2 * time.Second)
+		for sock.foreignWindowSize.Load() == sock.inFlightPacketSize.Load() {
+			// we need to keep sending 1 byte until
+			time.Sleep(10 * time.Millisecond)
+			// write logic to keep sending one byte until we get acks
 		}
 		writeBufferLock.Lock()
 		for writeBuffer.IsEmpty() {
@@ -225,6 +261,7 @@ func (sock *TcpSocket) HandleWrites() {
 
 		// split bytes into segments, construct tcp packets and send them
 		conn := sock.conn
+
 		for sizeToWrite > 0 {
 			segmentSize := uint32(min(TcpMaxSegmentSize, int(sizeToWrite)))
 
@@ -234,19 +271,30 @@ func (sock *TcpSocket) HandleWrites() {
 			sock.numBytesSent.Add(segmentSize)
 
 			// add payload
-			ackPacket := TcpPacket{
+			ackHdr.Checksum = computeTCPChecksum(ackHdr, conn.localIP.NetIP(), conn.foreignIP.NetIP(), payload[:segmentSize])
+			packet := TcpPacket{
 				header: *ackHdr,
 				data:   payload[:segmentSize],
 			}
 			payload = payload[segmentSize:]
 
-			packetBytes := ackPacket.Marshal()
+			packetBytes := packet.Marshal()
 			err := sendTcp(conn.foreignIP, packetBytes)
 			if err != nil {
 				fmt.Println("Error in handleWrites from SendMsgToDestIP: ", err)
-				return
+				break
 			}
-
+			sock.inFlightListLock.Lock()
+			sock.inFlightList.PushBack(&TcpPacketItem{
+				Value:         &packet,
+				Priority:      int(packet.header.SeqNum - sock.myInitSeqNum),
+				TimeSent:      time.Now(),
+				Retransmitted: false,
+			})
+			sock.inFlightListLock.Unlock()
+			// keep track of the size of packets in flight
+			// we should stop sending if size of packets in flight == window size
+			sock.inFlightPacketSize.Add(uint32(len(packet.data)))
 			sizeToWrite -= segmentSize
 		}
 	}

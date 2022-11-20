@@ -48,9 +48,12 @@ func VConnect(foreignIP link.IntIP, foreignPort uint16) (*TcpConn, error) {
 		Checksum:      0,
 		UrgentPointer: 0,
 	}
+
+	payload := make([]byte, 0)
+	tcpHdr.Checksum = computeTCPChecksum(&tcpHdr, conn.localIP.NetIP(), conn.foreignIP.NetIP(), payload)
 	synPacket := TcpPacket{
 		header: tcpHdr,
-		data:   make([]byte, 0),
+		data:   payload,
 	}
 	packetBytes := synPacket.Marshal()
 
@@ -70,6 +73,9 @@ func VConnect(foreignIP link.IntIP, foreignPort uint16) (*TcpConn, error) {
 		if (receivedHdr.Flags&header.TCPFlagSyn == 0) || (receivedHdr.Flags&header.TCPFlagAck == 0) {
 			deleteConnSafe(&conn)
 			return nil, errors.New("connect did not receive both SYN and ACK during handshake")
+		} else if !isValidTcpCheckSum(&packet.header, conn.foreignIP.NetIP(), conn.localIP.NetIP(), packet.data) {
+			deleteConnSafe(&conn)
+			return nil, errors.New("in connect: in correct checksum in syn-ack packet")
 		} else if packet.header.AckNum-sock.myInitSeqNum != 1 {
 			deleteConnSafe(&conn)
 			return nil, errors.New("in connect: get incorrect ack number in the syn-ack packet")
@@ -91,9 +97,11 @@ func VConnect(foreignIP link.IntIP, foreignPort uint16) (*TcpConn, error) {
 			Checksum:      0,
 			UrgentPointer: 0,
 		}
+		payload := make([]byte, 0)
+		tcpHdr.Checksum = computeTCPChecksum(&tcpHdr, conn.localIP.NetIP(), conn.foreignIP.NetIP(), payload)
 		ackPacket := TcpPacket{
 			header: tcpHdr,
-			data:   make([]byte, 0),
+			data:   payload,
 		}
 		packetBytes = ackPacket.Marshal()
 		err = sendTcp(foreignIP, packetBytes)

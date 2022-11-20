@@ -64,6 +64,16 @@ type TcpConn struct {
 	foreignPort uint16
 }
 
+// An Item is something we manage in a Priority queue.
+type TcpPacketItem struct {
+	Value    *TcpPacket // The Value of the item; arbitrary.
+	Priority int        // The the seq number of the packet
+	// The Index is needed by update and is maintained by the heap.Interface methods.
+	Index         int // The Index of the item in the heap.
+	TimeSent      time.Time
+	Retransmitted bool
+}
+
 func (conn TcpConn) String() string {
 	res := "\n"
 	res += fmt.Sprintf("localIP: %s\n", conn.localIP)
