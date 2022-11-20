@@ -2,6 +2,7 @@ package tcp
 
 import (
 	"container/heap"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand"
@@ -18,14 +19,20 @@ type TcpSocket struct {
 	connState string
 	conn      *TcpConn
 
-	readBuffer           *ringbuffer.RingBuffer
-	readBufferLock       *sync.Mutex
-	readBufferIsNotEmpty *sync.Cond
+	readBuffer            *ringbuffer.RingBuffer
+	readBufferLock        *sync.Mutex
+	readBufferIsNotEmpty  *sync.Cond
+	earlyArrivalQueue     PriorityQueue
+	earlyArrivalQueueLock *sync.Mutex
+	earlyArrivePacketSize *atomic.Uint32
 
 	writeBuffer           *ringbuffer.RingBuffer
 	writeBufferLock       *sync.Mutex
 	writeBufferIsNotFull  *sync.Cond
-	WriteBufferIsNotEmpty *sync.Cond
+	writeBufferIsNotEmpty *sync.Cond
+	inFlightQueue         PriorityQueue
+	inFlightQueueLock     *sync.Mutex
+	inFlightPacketSize    *atomic.Uint32
 
 	ch   chan *TcpPacket
 	stop chan bool
@@ -39,8 +46,6 @@ type TcpSocket struct {
 	foreignInitSeqNum  uint32         // raw
 	largestAckReceived *atomic.Uint32 // raw
 	foreignWindowSize  *atomic.Uint32
-
-	outOfOrderQueue heap.Interface
 }
 
 func MakeTcpSocket(connState string, tcpConn *TcpConn, foreignInitSeqNum uint32) (*TcpSocket, error) {
@@ -50,11 +55,17 @@ func MakeTcpSocket(connState string, tcpConn *TcpConn, foreignInitSeqNum uint32)
 		connState: connState,
 		conn:      tcpConn,
 
-		readBuffer:     ringbuffer.New(BufferSize),
-		readBufferLock: &sync.Mutex{},
+		readBuffer:            ringbuffer.New(BufferSize),
+		readBufferLock:        &sync.Mutex{},
+		earlyArrivalQueue:     PriorityQueue{},
+		earlyArrivalQueueLock: &sync.Mutex{},
+		earlyArrivePacketSize: atomic.NewUint32(0),
 
-		writeBuffer:     ringbuffer.New(BufferSize),
-		writeBufferLock: &sync.Mutex{},
+		writeBuffer:        ringbuffer.New(BufferSize),
+		writeBufferLock:    &sync.Mutex{},
+		inFlightQueue:      PriorityQueue{},
+		inFlightQueueLock:  &sync.Mutex{},
+		inFlightPacketSize: atomic.NewUint32(0),
 
 		ch:   make(chan *TcpPacket),
 		stop: make(chan bool),
@@ -71,9 +82,32 @@ func MakeTcpSocket(connState string, tcpConn *TcpConn, foreignInitSeqNum uint32)
 
 	sock.readBufferIsNotEmpty = sync.NewCond(sock.readBufferLock)
 	sock.writeBufferIsNotFull = sync.NewCond(sock.writeBufferLock)
-	sock.WriteBufferIsNotEmpty = sync.NewCond(sock.writeBufferLock)
+	sock.writeBufferIsNotEmpty = sync.NewCond(sock.writeBufferLock)
+	heap.Init(&sock.earlyArrivalQueue)
+	heap.Init(&sock.inFlightQueue)
 
 	return &sock, nil
+}
+
+func (sock *TcpSocket) writeIntoReadBuffer(p *TcpPacket) error {
+	sock.readBufferLock.Lock()
+	bytesWritten, err := sock.readBuffer.Write(p.data)
+	if err != nil {
+		fmt.Println("HandlePacket: Error while writing to the read buffer", err)
+		sock.readBufferLock.Unlock()
+		return err
+	} else {
+		if bytesWritten != len(p.data) {
+			fmt.Println("HandlePacket: Could not write everything to the read buffer - This should not be happening!!!")
+			sock.readBufferLock.Unlock()
+			return errors.New("we should have enough space in the buffer!!!")
+		}
+		sock.readBufferIsNotEmpty.Broadcast()
+		sock.readBufferLock.Unlock()
+
+		sock.nextExpectedByte.Add(uint32(len(p.data)))
+	}
+	return nil
 }
 
 func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
@@ -106,24 +140,18 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 	if relSeqNum == sock.nextExpectedByte.Load() {
 		if sock.readBuffer.Free() >= len(p.data) {
 			// write the data to the buffer if there is enough space available
-			sock.readBufferLock.Lock()
-			bytesWritten, err := sock.readBuffer.Write(p.data)
-			if err != nil {
-				fmt.Println("HandlePacket: Error while writing to the read buffer", err)
-				return
-			} else {
-				if bytesWritten != len(p.data) {
-					fmt.Println("HandlePacket: Could not write everything to the read buffer - This should not be happening!!!")
-					return
-				}
-				sock.readBufferIsNotEmpty.Broadcast()
-				sock.readBufferLock.Unlock()
-
-				sock.nextExpectedByte.Add(uint32(len(p.data)))
-			}
+			sock.writeIntoReadBuffer(p)
 			// tell waiting readers that it is party time
 
 			// TODO: check if any early arrivals can be added to the read buffer, and
+			// lock before manipulating early arrivals
+			sock.earlyArrivalQueueLock.Lock()
+			for sock.earlyArrivalQueue.Len() != 0 && sock.earlyArrivalQueue[0].Priority == int(sock.nextExpectedByte.Load()) {
+				smallest := sock.earlyArrivalQueue[0].Value
+				sock.earlyArrivalQueue.Pop()
+				sock.writeIntoReadBuffer(smallest)
+			}
+			sock.earlyArrivalQueueLock.Unlock()
 		} else {
 			// this ideally should not happen
 			// drop the packet
@@ -135,6 +163,12 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 		log.Println("HandlePacket: Packet arrived out of order: ", p)
 		log.Printf("Expect sequence number: %v; Received: %v", sock.nextExpectedByte, relSeqNum)
 
+		// add it to the out of order queue
+		sock.earlyArrivalQueue.Push(&TcpPacketItem{
+			Value:    p,
+			Priority: int(relSeqNum),
+		})
+		sock.earlyArrivePacketSize.Add(uint32(len(p.data)))
 		// sock.outOfOrderQueue.Push(p)
 	}
 
@@ -154,7 +188,7 @@ func (sock *TcpSocket) HandleWrites() {
 	writeBuffer := sock.writeBuffer
 	writeBufferLock := sock.writeBufferLock
 	isNotFull := sock.writeBufferIsNotFull
-	isNotEmpty := sock.WriteBufferIsNotEmpty
+	isNotEmpty := sock.writeBufferIsNotEmpty
 
 	for {
 		// TODO: zero window polling!!!

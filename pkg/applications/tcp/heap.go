@@ -5,7 +5,7 @@ import (
 )
 
 // An Item is something we manage in a Priority queue.
-type Item struct {
+type TcpPacketItem struct {
 	Value    *TcpPacket // The Value of the item; arbitrary.
 	Priority int        // The the seq number of the packet
 	// The Index is needed by update and is maintained by the heap.Interface methods.
@@ -13,7 +13,7 @@ type Item struct {
 }
 
 // A PriorityQueue implements heap.Interface and holds Items.
-type PriorityQueue []*Item
+type PriorityQueue []*TcpPacketItem
 
 func (pq PriorityQueue) Len() int { return len(pq) }
 
@@ -30,7 +30,7 @@ func (pq PriorityQueue) Swap(i, j int) {
 
 func (pq *PriorityQueue) Push(x any) {
 	n := len(*pq)
-	item := x.(*Item)
+	item := x.(*TcpPacketItem)
 	item.Index = n
 	*pq = append(*pq, item)
 }
@@ -46,7 +46,7 @@ func (pq *PriorityQueue) Pop() any {
 }
 
 // update modifies the Priority and Value of an Item in the queue.
-func (pq *PriorityQueue) Update(item *Item, Value *TcpPacket, Priority int) {
+func (pq *PriorityQueue) Update(item *TcpPacketItem, Value *TcpPacket, Priority int) {
 	item.Value = Value
 	item.Priority = Priority
 	heap.Fix(pq, item.Index)

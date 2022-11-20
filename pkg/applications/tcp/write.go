@@ -17,7 +17,7 @@ func VWrite(socketId int, buff []byte) (int, error) {
 	writeBuffer := sock.writeBuffer
 	totalBytesWritten := 0
 	isNotFull := sock.writeBufferIsNotFull
-	isNotEmpty := sock.WriteBufferIsNotEmpty
+	isNotEmpty := sock.writeBufferIsNotEmpty
 	writeBufferLock := sock.writeBufferLock
 
 	writeBufferLock.Lock()
