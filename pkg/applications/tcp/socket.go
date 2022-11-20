@@ -81,11 +81,11 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 	// 1. modify largestAckReceived and foreignWindowSize
 	packetWindowSize := uint32(p.header.WindowSize)
 	if p.header.AckNum > sock.largestAckReceived.Load() {
-		sock.largestAckReceived.Swap(p.header.AckNum)
-		sock.foreignWindowSize.Swap(packetWindowSize)
+		sock.largestAckReceived.Store(p.header.AckNum)
+		sock.foreignWindowSize.Store(packetWindowSize)
 	} else if p.header.AckNum == sock.largestAckReceived.Load() {
 		if sock.foreignWindowSize.Load() < packetWindowSize {
-			sock.foreignWindowSize.Swap(packetWindowSize)
+			sock.foreignWindowSize.Store(packetWindowSize)
 		}
 	} else {
 		fmt.Println("In HandlePacket: Old ack received")
@@ -106,8 +106,22 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 	if relSeqNum == sock.nextExpectedByte.Load() {
 		if sock.readBuffer.Free() >= len(p.data) {
 			// write the data to the buffer if there is enough space available
-			sock.readBuffer.Write(p.data)
-			sock.nextExpectedByte.Add(uint32(len(p.data)))
+			sock.readBufferLock.Lock()
+			bytesWritten, err := sock.readBuffer.Write(p.data)
+			if err != nil {
+				fmt.Println("HandlePacket: Error while writing to the read buffer", err)
+				return
+			} else {
+				if bytesWritten != len(p.data) {
+					fmt.Println("HandlePacket: Could not write everything to the read buffer - This should not be happening!!!")
+					return
+				}
+				sock.readBufferIsNotEmpty.Broadcast()
+				sock.readBufferLock.Unlock()
+
+				sock.nextExpectedByte.Add(uint32(len(p.data)))
+			}
+			// tell waiting readers that it is party time
 
 			// TODO: check if any early arrivals can be added to the read buffer, and
 		} else {
@@ -147,6 +161,10 @@ func (sock *TcpSocket) HandleWrites() {
 		// if sock.foreignWindowSize.Load() == 0 {
 
 		// }
+		for sock.foreignWindowSize.Load() == 0 {
+			fmt.Println("Zero window probing should happen here")
+			time.Sleep(2 * time.Second)
+		}
 		writeBufferLock.Lock()
 		for writeBuffer.IsEmpty() {
 			// wait till some vwrite call signals that the buffer has data in it
@@ -161,17 +179,15 @@ func (sock *TcpSocket) HandleWrites() {
 
 		// get all the bytes to send
 		if sizeToWrite == 0 {
-
+			writeBufferLock.Unlock()
+			continue
 		}
 		payload := make([]byte, sizeToWrite)
 		writeBuffer.Read(payload)
 
 		// signal waiting vwrite calls that the buffer is no longer full
 		isNotFull.Broadcast()
-		sock.writeBufferLock.Unlock()
-
-		// we may have read some data
-		fmt.Println("In handlewrites payload: ", string(payload))
+		writeBufferLock.Unlock()
 
 		// split bytes into segments, construct tcp packets and send them
 		conn := sock.conn
@@ -203,15 +219,10 @@ func (sock *TcpSocket) HandleWrites() {
 }
 
 func (sock *TcpSocket) HandleConnection() {
-	t := time.NewTicker(READ_WRITE_SLEEP_TIME)
+	go sock.HandleWrites()
 	for {
-		select {
-		case p := <-sock.ch:
-			go sock.HandlePacket(p)
-		case <-t.C:
-			go sock.HandleWrites()
-		}
-
+		p := <-sock.ch
+		go sock.HandlePacket(p)
 	}
 
 	// have a thread waiting for data in the write buffer,

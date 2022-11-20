@@ -18,9 +18,9 @@ func VWrite(socketId int, buff []byte) (int, error) {
 	totalBytesWritten := 0
 	isNotFull := sock.writeBufferIsNotFull
 	isNotEmpty := sock.WriteBufferIsNotEmpty
-	lock := sock.writeBufferLock
+	writeBufferLock := sock.writeBufferLock
 
-	lock.Lock()
+	writeBufferLock.Lock()
 
 	for totalBytesWritten < len(buff) {
 		// we wait until there is available space to write
@@ -30,7 +30,7 @@ func VWrite(socketId int, buff []byte) (int, error) {
 			bytesWritten, err := writeBuffer.Write(buff[totalBytesWritten:])
 			if err != nil {
 				log.Println("error in VWrite: ", err)
-				lock.Unlock()
+				writeBufferLock.Unlock()
 				return totalBytesWritten, err
 			}
 			totalBytesWritten += bytesWritten
@@ -41,7 +41,7 @@ func VWrite(socketId int, buff []byte) (int, error) {
 		}
 	}
 	// signal that we put something in the buffer
-	lock.Unlock()
+	writeBufferLock.Unlock()
 
 	if totalBytesWritten != len(buff) {
 		log.Fatalln("VWrite wrote too many bytes 💀")
