@@ -9,29 +9,33 @@ import (
 	"os"
 )
 
-func main() {
-	// Some items and their priorities.
-	items := map[string]int{
-		"banana": 3, "apple": 2, "pear": 4,
+func testHeap() {
+	pq := make(tcp.PriorityQueue, 3)
+
+	banana := "banana"
+	pq[0] = &tcp.Item{
+		Value:    &banana,
+		Priority: 3,
 	}
 
-	// Create a priority queue, put the items in it, and
-	// establish the priority queue (heap) invariants.
-	pq := make(tcp.PriorityQueue, len(items))
-	i := 0
-	for value, priority := range items {
-		pq[i] = &tcp.Item{
-			Value:    value,
-			Priority: priority,
-			Index:    i,
-		}
-		i++
+	apple := "apple"
+	pq[1] = &tcp.Item{
+		Value:    &apple,
+		Priority: 2,
 	}
+
+	pear := "pear"
+	pq[2] = &tcp.Item{
+		Value:    &pear,
+		Priority: 4,
+	}
+
 	heap.Init(&pq)
 
 	// Insert a new item and then modify its priority.
+	orange := "orange"
 	item := &tcp.Item{
-		Value:    "orange",
+		Value:    &orange,
 		Priority: 1,
 	}
 	heap.Push(&pq, item)
@@ -40,10 +44,15 @@ func main() {
 	// Take the items out; they arrive in decreasing priority order.
 	for pq.Len() > 0 {
 		item := heap.Pop(&pq).(*tcp.Item)
-		fmt.Printf("%.2d:%s ", item.Priority, item.Value)
+		fmt.Printf("%.2d:%s ", item.Priority, *item.Value)
 	}
+	fmt.Println("")
 
 	return
+}
+
+func main() {
+	// testHeap()
 
 	if len(os.Args) != 2 {
 		log.Println("Incorrect number of arguments. Correct usage: node <linksfile>")
