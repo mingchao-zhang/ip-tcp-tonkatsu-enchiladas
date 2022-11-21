@@ -50,6 +50,10 @@ type TcpSocket struct {
 
 	//roundtrip time
 	srtt time.Duration
+	rto  time.Duration
+
+	// lock nextExpectedByte, srtt, rto
+	varLock *sync.Mutex
 }
 
 func MakeTcpSocket(connState string, tcpConn *TcpConn, foreignInitSeqNum uint32) (*TcpSocket, error) {
@@ -83,7 +87,10 @@ func MakeTcpSocket(connState string, tcpConn *TcpConn, foreignInitSeqNum uint32)
 		largestAckReceived: atomic.NewUint32(0),
 		foreignWindowSize:  atomic.NewUint32(0),
 
-		srtt: time.Microsecond * 20,
+		srtt: time.Microsecond * 50,
+		rto:  time.Microsecond * 50,
+
+		varLock: &sync.Mutex{},
 	}
 
 	sock.readBufferIsNotEmpty = sync.NewCond(sock.readBufferLock)
@@ -146,6 +153,9 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 					break
 				}
 				sock.inFlightPacketSize.Sub(uint32(len(item.Value.data)))
+				if !item.Retransmitted {
+					sock.updateRTO(time.Since(item.TimeSent))
+				}
 				inFlight.Remove(inFlight.Front())
 			}
 			sock.inFlightListLock.Unlock()
@@ -169,6 +179,7 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 			return
 		}
 
+		sock.varLock.Lock()
 		// 3. try to write data either in the read buffer or in the heap
 		if relSeqNum == sock.nextExpectedByte.Load() {
 			if sock.readBuffer.Free() >= len(p.data) {
@@ -185,6 +196,7 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 					sock.writeIntoReadBuffer(smallest)
 				}
 				sock.earlyArrivalQueueLock.Unlock()
+				sock.varLock.Unlock()
 			} else {
 				// this ideally should not happen
 				// drop the packet
@@ -193,8 +205,10 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 			}
 		} else { // early arrivals
 			// add the packet to the heap of packets
-			log.Println("HandlePacket: Packet arrived out of order: ", p)
+
+			log.Println("HandlePacket: Packet arrived out of order: ", p.header)
 			log.Printf("Expect sequence number: %v; Received: %v", sock.nextExpectedByte, relSeqNum)
+			sock.varLock.Unlock()
 
 			// add it to the out of order queue
 			sock.earlyArrivalQueue.Push(&TcpPacketItem{
@@ -342,4 +356,11 @@ func (sock *TcpSocket) String() string {
 	res += ": %\n"
 
 	return res
+}
+
+func (sock *TcpSocket) updateRTO(obsRTT time.Duration) {
+	sock.varLock.Lock()
+	sock.srtt = time.Duration((float64(sock.srtt) * Alpha) + (float64(obsRTT) * (1 - Alpha)))
+	sock.rto = maxTime(RTOMin, minTime(time.Duration(float64(sock.srtt)*Beta), RTOMax))
+	sock.varLock.Unlock()
 }

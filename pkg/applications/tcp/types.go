@@ -20,6 +20,11 @@ const (
 	BufferSize        = 1<<16 - 1
 	TcpMaxSegmentSize = transport.MAXMSGSIZE - TcpHeaderLen - header.IPv4MinimumSize
 
+	Alpha  = 0.85
+	Beta   = 1.65
+	RTOMin = 30 * time.Microsecond
+	RTOMax = 200 * time.Microsecond
+
 	SYN_RECEIVED = "SYN_RECEIVED"
 	SYN_SENT     = "SYN_SENT"
 	ESTABLISHED  = "ESTAB"
