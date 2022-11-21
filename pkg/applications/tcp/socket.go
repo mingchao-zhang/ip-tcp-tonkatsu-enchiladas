@@ -156,6 +156,7 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 				if !item.Retransmitted {
 					sock.updateRTO(time.Since(item.TimeSent))
 				}
+				fmt.Println("removing from inflight queue ", string(item.Value.data))
 				inFlight.Remove(inFlight.Front())
 			}
 			sock.inFlightListLock.Unlock()
@@ -172,10 +173,7 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 		// 2. check if we need to write to buffer
 		relSeqNum := tcpHdr.SeqNum - sock.foreignInitSeqNum
 
-		if relSeqNum < sock.nextExpectedByte.Load() {
-			fmt.Printf("In HandlePacket: relSeqNum: %d, sock.nextExpectedByte: %d\n", relSeqNum, sock.nextExpectedByte.Load())
-			return
-		} else if len(p.data) == 0 {
+		if len(p.data) == 0 {
 			return
 		}
 
@@ -203,7 +201,7 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 				fmt.Println("HandlePacket window size not respected")
 				return
 			}
-		} else { // early arrivals
+		} else if relSeqNum > sock.nextExpectedByte.Load() { // early arrivals
 			// add the packet to the heap of packets
 
 			log.Println("HandlePacket: Packet arrived out of order: ", p.header)
@@ -247,9 +245,11 @@ func (sock *TcpSocket) HandleWrites() {
 		// either we have sent enough packets, or the receiver can't take any more packets
 		for sock.foreignWindowSize.Load() == sock.inFlightPacketSize.Load() || sock.foreignWindowSize.Load() == 0 {
 			// we need to keep sending 1 byte until
-			time.Sleep(10 * time.Millisecond)
+
+			// time.Sleep()
 			// write logic to keep sending one byte until we get acks
 		}
+
 		writeBufferLock.Lock()
 		for writeBuffer.IsEmpty() {
 			// wait till some vwrite call signals that the buffer has data in it
@@ -315,8 +315,32 @@ func (sock *TcpSocket) HandleWrites() {
 	}
 }
 
+func (sock *TcpSocket) HandleRetransmission() {
+	conn := sock.conn
+	inFlight := sock.inFlightList
+	lock := sock.inFlightListLock
+	for {
+		lock.Lock()
+		if inFlight.Len() != 0 {
+			item := inFlight.Front().Value.(*TcpPacketItem)
+			if time.Since(item.TimeSent) > sock.rto {
+				item.Retransmitted = true
+				packet := item.Value
+				packetBytes := packet.Marshal()
+				err := sendTcp(conn.foreignIP, packetBytes)
+				if err != nil {
+					fmt.Println("Error in handleRetransmission from SendMsgToDestIP: ", err)
+				}
+			}
+		}
+		lock.Unlock()
+		time.Sleep(sock.rto)
+	}
+}
+
 func (sock *TcpSocket) HandleConnection() {
 	go sock.HandleWrites()
+	// go sock.HandleRetransmission()
 	for {
 		p := <-sock.ch
 		go sock.HandlePacket(p)
