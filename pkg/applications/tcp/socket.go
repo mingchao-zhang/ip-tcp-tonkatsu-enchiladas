@@ -136,31 +136,32 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 	if tcpHdr.Flags == header.TCPFlagAck {
 		// 1. modify largestAckReceived and foreignWindowSize
 		packetWindowSize := uint32(tcpHdr.WindowSize)
+		// check if we need to update the largest ack number
+		sock.inFlightListLock.Lock()
+		relLargestAckNum := sock.largestAckReceived.Load() - sock.myInitSeqNum
 		if tcpHdr.AckNum > sock.largestAckReceived.Load() {
-
-			sock.inFlightListLock.Lock()
+			// if the ack number is greater than the largest we've seen
+			// update the window size and the acknowledgement number
 			sock.foreignWindowSize.Store(packetWindowSize)
 			sock.largestAckReceived.Store(tcpHdr.AckNum)
 
-			relLargestAckNum := sock.largestAckReceived.Load() - sock.myInitSeqNum
-
 			inFlight := sock.inFlightList
-
-			// Maybe change '<=' to '<'
+			// only one thread updates the inflight list at any given time
 			for inFlight.Len() != 0 {
 				item := inFlight.Front().Value.(*TcpPacketItem)
-				if item.Priority > int(relLargestAckNum) {
+				// priority of a TcpPacketItem corresponds to the relative sequence number of packet
+				if item.Priority >= int(relLargestAckNum) {
+					// if largest rel ack is greater than the sequence number of the packet,
+					// that packet has been acked - if it is equal, then it has not been acked
 					break
 				}
 				sock.inFlightPacketSize.Sub(uint32(len(item.Value.data)))
 				if !item.Retransmitted {
 					sock.updateRTO(time.Since(item.TimeSent))
 				}
-				fmt.Println("removing from inflight queue ", string(item.Value.data))
+				// fmt.Println("removing from inflight queue ", string(item.Value.data))
 				inFlight.Remove(inFlight.Front())
 			}
-			sock.inFlightListLock.Unlock()
-
 		} else if tcpHdr.AckNum == sock.largestAckReceived.Load() {
 			if sock.foreignWindowSize.Load() < packetWindowSize {
 				sock.foreignWindowSize.Store(packetWindowSize)
@@ -169,6 +170,7 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 			fmt.Println("In HandlePacket: Old ack received")
 			return
 		}
+		sock.inFlightListLock.Unlock()
 
 		// 2. check if we need to write to buffer
 		relSeqNum := tcpHdr.SeqNum - sock.foreignInitSeqNum
@@ -185,8 +187,6 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 				sock.writeIntoReadBuffer(p)
 				// tell waiting readers that it is party time
 
-				// TODO: check if any early arrivals can be added to the read buffer, and
-				// lock before manipulating early arrivals
 				sock.earlyArrivalQueueLock.Lock()
 				for sock.earlyArrivalQueue.Len() != 0 && sock.earlyArrivalQueue[0].Priority == int(sock.nextExpectedByte.Load()) {
 					smallest := sock.earlyArrivalQueue[0].Value
@@ -245,8 +245,8 @@ func (sock *TcpSocket) HandleWrites() {
 		// either we have sent enough packets, or the receiver can't take any more packets
 		for sock.foreignWindowSize.Load() == sock.inFlightPacketSize.Load() || sock.foreignWindowSize.Load() == 0 {
 			// we need to keep sending 1 byte until
-
-			// time.Sleep()
+			fmt.Println("Should do zwp")
+			time.Sleep(time.Second * 3)
 			// write logic to keep sending one byte until we get acks
 		}
 
@@ -318,14 +318,16 @@ func (sock *TcpSocket) HandleWrites() {
 func (sock *TcpSocket) HandleRetransmission() {
 	conn := sock.conn
 	inFlight := sock.inFlightList
-	lock := sock.inFlightListLock
+	listLock := sock.inFlightListLock
 	for {
-		lock.Lock()
+		listLock.Lock()
 		if inFlight.Len() != 0 {
 			item := inFlight.Front().Value.(*TcpPacketItem)
+
 			if time.Since(item.TimeSent) > sock.rto {
 				item.Retransmitted = true
 				packet := item.Value
+				// fmt.Printf("Retransmitting %v, seq: %v", string(packet.data), item.Priority)
 				packetBytes := packet.Marshal()
 				err := sendTcp(conn.foreignIP, packetBytes)
 				if err != nil {
@@ -333,14 +335,15 @@ func (sock *TcpSocket) HandleRetransmission() {
 				}
 			}
 		}
-		lock.Unlock()
+		listLock.Unlock()
+
 		time.Sleep(sock.rto)
 	}
 }
 
 func (sock *TcpSocket) HandleConnection() {
 	go sock.HandleWrites()
-	// go sock.HandleRetransmission()
+	go sock.HandleRetransmission()
 	for {
 		p := <-sock.ch
 		go sock.HandlePacket(p)
@@ -354,12 +357,13 @@ func (sock *TcpSocket) HandleConnection() {
 
 func (sock *TcpSocket) getAckHeader() *header.TCPFields {
 	return &header.TCPFields{
-		SrcPort:    sock.conn.localPort,
-		DstPort:    sock.conn.foreignPort,
-		SeqNum:     sock.myInitSeqNum + sock.numBytesSent.Load() + 1,
+		SrcPort: sock.conn.localPort,
+		DstPort: sock.conn.foreignPort,
+		SeqNum:  sock.myInitSeqNum + sock.numBytesSent.Load() + 1,
+		// convert to absolute next expected byte
 		AckNum:     sock.nextExpectedByte.Load() + sock.foreignInitSeqNum,
 		DataOffset: TcpHeaderLen,
-		Flags:      header.TCPFlagAck, // what flag should we set?
+		Flags:      header.TCPFlagAck,
 		WindowSize: uint16(sock.readBuffer.Free()),
 		// To compute
 		Checksum:      0,
