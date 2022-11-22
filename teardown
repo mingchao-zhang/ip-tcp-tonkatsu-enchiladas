@@ -1,0 +1,6 @@
+shutdown, close+
+
+when a side is ready that theyre done sending
+
+
+shutdown write sends a fin

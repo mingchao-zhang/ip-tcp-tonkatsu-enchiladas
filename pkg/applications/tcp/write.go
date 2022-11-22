@@ -3,6 +3,8 @@ package tcp
 import (
 	"errors"
 	"log"
+
+	"github.com/smallnest/ringbuffer"
 )
 
 func VWrite(socketId int, buff []byte) (int, error) {
@@ -28,7 +30,7 @@ func VWrite(socketId int, buff []byte) (int, error) {
 			isNotFull.Wait()
 		} else {
 			bytesWritten, err := writeBuffer.Write(buff[totalBytesWritten:])
-			if err != nil {
+			if err != nil && err != ringbuffer.ErrTooManyDataToWrite {
 				log.Println("error in VWrite: ", err)
 				writeBufferLock.Unlock()
 				return totalBytesWritten, err
