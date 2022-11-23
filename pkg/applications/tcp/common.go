@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"ip/pkg/ipinterface"
 	"net"
+	"time"
 
 	"github.com/google/netstack/tcpip/header"
 )
@@ -47,6 +48,20 @@ func deleteConnSafe(conn *TcpConn) {
 	state.lock.Lock()
 	delete(state.sockets, *conn)
 	state.lock.Unlock()
+}
+
+func minTime(a time.Duration, b time.Duration) time.Duration {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxTime(a time.Duration, b time.Duration) time.Duration {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func min(a int, b int) int {

@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	MAXMSGSIZE = 1500
+	MAXMSGSIZE = 1400
 )
 
 type Transport struct {

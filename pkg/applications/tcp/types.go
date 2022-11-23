@@ -20,6 +20,12 @@ const (
 	BufferSize        = 1<<16 - 1
 	TcpMaxSegmentSize = transport.MAXMSGSIZE - TcpHeaderLen - header.IPv4MinimumSize
 
+	Alpha = 0.85
+	Beta  = 1.65
+
+	RTOMin = 50 * time.Microsecond
+	RTOMax = 200 * time.Microsecond
+
 	SYN_RECEIVED = "SYN_RECEIVED"
 	SYN_SENT     = "SYN_SENT"
 	ESTABLISHED  = "ESTAB"
@@ -67,7 +73,7 @@ type TcpConn struct {
 // An Item is something we manage in a Priority queue.
 type TcpPacketItem struct {
 	Value    *TcpPacket // The Value of the item; arbitrary.
-	Priority int        // The the seq number of the packet
+	Priority int        // The relative seq number of the packet
 	// The Index is needed by update and is maintained by the heap.Interface methods.
 	Index         int // The Index of the item in the heap.
 	TimeSent      time.Time

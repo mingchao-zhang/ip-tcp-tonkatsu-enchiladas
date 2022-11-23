@@ -35,6 +35,15 @@ func handleAccept(words []string) {
 func handleConnect(words []string) {
 	// c <ip> <port>
 	foreignIP := words[1]
+	// modify foreignIP for testing purpose
+	if foreignIP == "A" {
+		foreignIP = "192.168.0.1"
+	} else if foreignIP == "B" {
+		foreignIP = "192.168.0.2"
+	} else if foreignIP == "C" {
+		foreignIP = "192.168.0.4"
+	}
+
 	port, err := strconv.Atoi(words[2])
 	if err != nil {
 		log.Printf("Invalid TCP port: %s", words[2])
@@ -56,9 +65,25 @@ func handleSendString(words []string) {
 		log.Printf("Invalid socket Id: %s", words[1])
 		return
 	}
-	payload := []byte(words[2])
+	payload := words[2]
 
-	bytesWritten, err := tcp.VWrite(socketId, payload)
+	msg := []byte(payload)
+	if payload == "_big_" {
+		msg = make([]byte, tcp.BufferSize-1)
+		aByte := []byte("a")[0]
+		bByte := []byte("b")[0]
+		for i := range msg {
+			if i == len(msg)-1 {
+				msg[i] = aByte
+				break
+			}
+			msg[i] = bByte
+		}
+	}
+
+	fmt.Println("The length of the input string is:", len(payload))
+
+	bytesWritten, err := tcp.VWrite(socketId, msg)
 	if err != nil {
 		fmt.Println(err)
 	} else {
@@ -84,8 +109,8 @@ func handleReadString(words []string) {
 	payload := make([]byte, bytesToRead)
 
 	// v_read() on 2 bytes returned 1; contents of buffer: 'o'
+	totalBytesRead := 0
 	if block {
-		totalBytesRead := 0
 		for totalBytesRead < bytesToRead {
 			bytesRead, err := tcp.VRead(socketId, payload[totalBytesRead:])
 			if err != nil {
@@ -93,14 +118,15 @@ func handleReadString(words []string) {
 			}
 			totalBytesRead += bytesRead
 		}
-		fmt.Println(string(payload))
+
 	} else {
-		bytesRead, err := tcp.VRead(socketId, payload)
+		totalBytesRead, err = tcp.VRead(socketId, payload)
 		if err != nil {
 			fmt.Println("Error while reading:", err)
 		}
-		fmt.Println(string(payload[:bytesRead]))
 	}
+	fmt.Println(string(payload[:totalBytesRead]))
+	fmt.Println("VRead() returned ", totalBytesRead)
 }
 
 func handleShutdownTcpSocket(words []string) {
