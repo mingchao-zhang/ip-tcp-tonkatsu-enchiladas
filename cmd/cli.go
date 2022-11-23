@@ -35,6 +35,15 @@ func handleAccept(words []string) {
 func handleConnect(words []string) {
 	// c <ip> <port>
 	foreignIP := words[1]
+	// modify foreignIP for testing purpose
+	if foreignIP == "A" {
+		foreignIP = "192.168.0.1"
+	} else if foreignIP == "B" {
+		foreignIP = "192.168.0.2"
+	} else if foreignIP == "C" {
+		foreignIP = "192.168.0.4"
+	}
+
 	port, err := strconv.Atoi(words[2])
 	if err != nil {
 		log.Printf("Invalid TCP port: %s", words[2])

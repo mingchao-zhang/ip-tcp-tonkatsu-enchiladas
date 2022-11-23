@@ -98,7 +98,7 @@ func (l *TcpListener) VAccept() (*TcpConn, error) {
 					deleteConnSafe(&conn)
 					return nil, errors.New("unexpected ack number received")
 				}
-				sock.nextExpectedByte.Store(1)
+
 				// at this point we have established a connection
 				// check if the appropriate number was acked
 				sock.connState = ESTABLISHED
