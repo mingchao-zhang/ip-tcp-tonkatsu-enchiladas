@@ -20,6 +20,9 @@ type TcpSocket struct {
 	connState string
 	conn      *TcpConn
 
+	canRead  bool
+	canWrite bool
+
 	readBuffer            *ringbuffer.RingBuffer
 	readBufferLock        *sync.Mutex
 	readBufferIsNotEmpty  *sync.Cond
@@ -64,6 +67,9 @@ func MakeTcpSocket(connState string, tcpConn *TcpConn, foreignInitSeqNum uint32)
 		sockId:    int(nextSockId.Add(1)),
 		connState: connState,
 		conn:      tcpConn,
+
+		canRead:  true,
+		canWrite: true,
 
 		readBuffer:            ringbuffer.New(BufferSize),
 		readBufferLock:        &sync.Mutex{},
