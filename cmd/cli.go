@@ -69,7 +69,7 @@ func handleSendString(words []string) {
 
 	msg := []byte(payload)
 	if payload == "_big_" {
-		msg = make([]byte, tcp.BufferSize-1)
+		msg = make([]byte, tcp.BufferSize*2)
 		aByte := []byte("a")[0]
 		bByte := []byte("b")[0]
 		for i := range msg {
@@ -199,7 +199,7 @@ func handleInput(text string, node *Node) {
 	} else if (len(words) == 3 || len(words) == 4) && words[0] == "r" {
 		handleReadString(words)
 	} else if len(words) == 1 && words[0] == "ls" {
-		fmt.Print(*tcp.GetSocketInfo())
+		fmt.Print(tcp.GetSocketInfo())
 	} else if len(words) == 1 && words[0] == "h" {
 		fmt.Println(HELP_MSG)
 	} else if len(words) == 3 && words[0] == "sd" {
@@ -211,6 +211,20 @@ func handleInput(text string, node *Node) {
 
 	} else if len(words) == 3 && words[0] == "rf" {
 		handleReadFile(words)
+	} else if len(words) == 2 && words[0] == "pbs" {
+		socketId, err := strconv.Atoi(words[1])
+		if err != nil {
+			fmt.Printf("Bad socketID \"%s\"\n", words[1])
+			return
+		}
+		tcp.PrintBufferSizes(socketId)
+	} else if len(words) == 2 && words[0] == "eaq" {
+		socketId, err := strconv.Atoi(words[1])
+		if err != nil {
+			fmt.Printf("Bad socketID \"%s\"\n", words[1])
+			return
+		}
+		tcp.PrintEarlyArrivalSize(socketId)
 	} else {
 		handleIPInput(text, node)
 	}
