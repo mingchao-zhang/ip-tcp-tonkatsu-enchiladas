@@ -15,7 +15,7 @@ const (
 )
 
 // Safe
-func getSocketById(id int) *TcpSocket {
+func GetSocketById(id int) *TcpSocket {
 	state.lock.Lock()
 	defer state.lock.Unlock()
 

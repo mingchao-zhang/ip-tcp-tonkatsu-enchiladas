@@ -1,9 +1,9 @@
 *~
 \#*#
 *.o
-*.txt
 .vagrant/
 .DS_Store
 node
 .vscode/
 .VSCodeCounter/
+./*.txt

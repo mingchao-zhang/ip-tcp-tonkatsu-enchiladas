@@ -114,12 +114,17 @@ func MakeTcpSocket(connState string, tcpConn *TcpConn, foreignInitSeqNum uint32)
 	return &sock, nil
 }
 
+func (sock *TcpSocket) GetConn() *TcpConn {
+	return sock.conn
+}
+
 // modify nextExpectedByte
 func (sock *TcpSocket) writeIntoReadBuffer(p *TcpPacket) error {
 	sock.readBufferLock.Lock()
 	bytesWritten, err := sock.readBuffer.Write(p.data)
 	if err != nil {
-		fmt.Println("HandlePacket: Error while writing to the read buffer", err)
+		// TODO: check here if there is some issue in the future
+		// fmt.Println("HandlePacket: Error while writing to the read buffer", err)
 		sock.readBufferLock.Unlock()
 		return err
 	} else {
@@ -384,7 +389,7 @@ func (sock *TcpSocket) HandleRetransmission() {
 		if inFlight.Len() != 0 {
 			item := inFlight.Front().Value.(*TcpPacketItem)
 
-			if time.Since(item.TimeSent) > time.Second*3 {
+			if time.Since(item.TimeSent) > sock.srtt {
 				item.Retransmitted = true
 				packet := item.Value
 
@@ -397,7 +402,7 @@ func (sock *TcpSocket) HandleRetransmission() {
 		}
 		listLock.Unlock()
 
-		time.Sleep(time.Second * 3)
+		time.Sleep(sock.srtt)
 	}
 }
 
@@ -452,7 +457,7 @@ func (sock *TcpSocket) updateRTO(obsRTT time.Duration) {
 }
 
 func PrintBufferSizes(socketId int) {
-	sock := getSocketById(socketId)
+	sock := GetSocketById(socketId)
 	if sock == nil {
 		fmt.Println("Invalid socket number")
 	} else {
@@ -461,7 +466,7 @@ func PrintBufferSizes(socketId int) {
 }
 
 func PrintEarlyArrivalSize(socketId int) {
-	sock := getSocketById(socketId)
+	sock := GetSocketById(socketId)
 	if sock == nil {
 		fmt.Println("Invalid socket number")
 	} else {
