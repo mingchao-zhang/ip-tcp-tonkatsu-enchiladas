@@ -99,8 +99,8 @@ func MakeTcpSocket(connState string, tcpConn *TcpConn, foreignInitSeqNum uint32)
 		largestAckReceived: atomic.NewUint32(0),
 		foreignWindowSize:  atomic.NewUint32(0),
 
-		srtt: time.Microsecond * 50,
-		rto:  time.Microsecond * 50,
+		srtt: time.Millisecond * 5,
+		rto:  time.Microsecond * 500,
 
 		varLock: &deadlock.Mutex{},
 	}
@@ -237,9 +237,7 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 				sock.earlyArrivalSeqNumSet[relSeqNum] = true
 				sock.earlyArrivalPacketSize.Add(uint32(len(p.data)))
 			}
-		} else {
-			// TODO: possibly return
-		}
+		} // else we received a packet already acked - so we send
 
 		// 4. send an ack back
 		// remember to increase nextExpectedByte before constructing the header
@@ -254,9 +252,7 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 		if err != nil {
 			log.Println("sendTcp: ", err)
 		}
-	} else {
-		fmt.Println("should not happen right now")
-	}
+	} // handle other cases
 }
 
 func (sock *TcpSocket) HandleWrites() {
@@ -279,7 +275,7 @@ func (sock *TcpSocket) HandleWrites() {
 			// we need to keep sending 1 byte until
 			// over here we need to make a packet of size 1
 
-			fmt.Println("Sending zwp")
+			// fmt.Println("Sending zwp")
 
 			oneByte := make([]byte, 1)
 
@@ -314,7 +310,7 @@ func (sock *TcpSocket) HandleWrites() {
 			// zwp will get retransmitted
 			sock.inFlightPacketSize.Add(uint32(len(packet.data)))
 			sock.windowNotEmpty.Wait()
-			fmt.Println("received ack for zwp")
+			// fmt.Println("received ack for zwp")
 			sock.inFlightListLock.Unlock()
 		} else {
 
@@ -324,7 +320,7 @@ func (sock *TcpSocket) HandleWrites() {
 			// either less than the
 			sizeToWrite := uint32(min(int(sock.foreignWindowSize.Load()), writeBuffer.Length()))
 
-			fmt.Println("sending", sizeToWrite, "bytes")
+			// fmt.Println("sending", sizeToWrite, "bytes")
 
 			// get all the bytes to send
 			if sizeToWrite == 0 {
@@ -389,7 +385,7 @@ func (sock *TcpSocket) HandleRetransmission() {
 		if inFlight.Len() != 0 {
 			item := inFlight.Front().Value.(*TcpPacketItem)
 
-			if time.Since(item.TimeSent) > sock.srtt {
+			if time.Since(item.TimeSent) > sock.rto {
 				item.Retransmitted = true
 				packet := item.Value
 
@@ -402,7 +398,7 @@ func (sock *TcpSocket) HandleRetransmission() {
 		}
 		listLock.Unlock()
 
-		time.Sleep(sock.srtt)
+		time.Sleep(sock.rto)
 	}
 }
 
