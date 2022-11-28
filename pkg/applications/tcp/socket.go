@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sasha-s/go-deadlock"
+
 	"github.com/google/netstack/tcpip/header"
 	"github.com/smallnest/ringbuffer"
 	"go.uber.org/atomic"
@@ -24,20 +26,20 @@ type TcpSocket struct {
 	canWrite bool
 
 	readBuffer            *ringbuffer.RingBuffer
-	readBufferLock        *sync.Mutex
+	readBufferLock        *deadlock.Mutex
 	readBufferIsNotEmpty  *sync.Cond
 	earlyArrivalQueue     PriorityQueue
 	earlyArrivalSeqNumSet map[uint32]bool
-	earlyArrivalQueueLock *sync.Mutex
+	earlyArrivalQueueLock *deadlock.Mutex
 	// TODO: need to decrease the size
-	earlyArrivePacketSize *atomic.Uint32
+	earlyArrivalPacketSize *atomic.Uint32
 
 	writeBuffer           *ringbuffer.RingBuffer
-	writeBufferLock       *sync.Mutex
+	writeBufferLock       *deadlock.Mutex
 	writeBufferIsNotFull  *sync.Cond
 	writeBufferIsNotEmpty *sync.Cond
 	inFlightList          *list.List
-	inFlightListLock      *sync.Mutex
+	inFlightListLock      *deadlock.Mutex
 	inFlightPacketSize    *atomic.Uint32
 
 	ch   chan *TcpPacket
@@ -53,13 +55,14 @@ type TcpSocket struct {
 	// TODO: numBytesSent - largestAckReceived <= foreignWindowSize
 	largestAckReceived *atomic.Uint32 // raw
 	foreignWindowSize  *atomic.Uint32
+	windowNotEmpty     *sync.Cond
 
 	//roundtrip time
 	srtt time.Duration
 	rto  time.Duration
 
 	// lock nextExpectedByte, srtt, rto
-	varLock *sync.Mutex
+	varLock *deadlock.Mutex
 }
 
 func MakeTcpSocket(connState string, tcpConn *TcpConn, foreignInitSeqNum uint32) (*TcpSocket, error) {
@@ -71,17 +74,17 @@ func MakeTcpSocket(connState string, tcpConn *TcpConn, foreignInitSeqNum uint32)
 		canRead:  true,
 		canWrite: true,
 
-		readBuffer:            ringbuffer.New(BufferSize),
-		readBufferLock:        &sync.Mutex{},
-		earlyArrivalQueue:     PriorityQueue{},
-		earlyArrivalSeqNumSet: make(map[uint32]bool),
-		earlyArrivalQueueLock: &sync.Mutex{},
-		earlyArrivePacketSize: atomic.NewUint32(0),
+		readBuffer:             ringbuffer.New(BufferSize),
+		readBufferLock:         &deadlock.Mutex{},
+		earlyArrivalQueue:      PriorityQueue{},
+		earlyArrivalSeqNumSet:  make(map[uint32]bool),
+		earlyArrivalQueueLock:  &deadlock.Mutex{},
+		earlyArrivalPacketSize: atomic.NewUint32(0),
 
 		writeBuffer:        ringbuffer.New(BufferSize),
-		writeBufferLock:    &sync.Mutex{},
+		writeBufferLock:    &deadlock.Mutex{},
 		inFlightList:       &list.List{},
-		inFlightListLock:   &sync.Mutex{},
+		inFlightListLock:   &deadlock.Mutex{},
 		inFlightPacketSize: atomic.NewUint32(0),
 
 		ch:   make(chan *TcpPacket),
@@ -99,12 +102,13 @@ func MakeTcpSocket(connState string, tcpConn *TcpConn, foreignInitSeqNum uint32)
 		srtt: time.Microsecond * 50,
 		rto:  time.Microsecond * 50,
 
-		varLock: &sync.Mutex{},
+		varLock: &deadlock.Mutex{},
 	}
 
 	sock.readBufferIsNotEmpty = sync.NewCond(sock.readBufferLock)
 	sock.writeBufferIsNotFull = sync.NewCond(sock.writeBufferLock)
 	sock.writeBufferIsNotEmpty = sync.NewCond(sock.writeBufferLock)
+	sock.windowNotEmpty = sync.NewCond(sock.inFlightListLock)
 	heap.Init(&sock.earlyArrivalQueue)
 
 	return &sock, nil
@@ -154,6 +158,12 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 			if sock.foreignWindowSize.Load() < packetWindowSize {
 				sock.foreignWindowSize.Store(packetWindowSize)
 			}
+			sock.inFlightListLock.Lock()
+			if sock.inFlightPacketSize.Load() < sock.foreignWindowSize.Load() {
+				// wake up the zwp
+				sock.windowNotEmpty.Broadcast()
+			}
+			sock.inFlightListLock.Unlock()
 		} else { // tcpHdr.AckNum > sock.largestAckReceived.Load()
 			sock.foreignWindowSize.Store(packetWindowSize)
 			sock.largestAckReceived.Store(tcpHdr.AckNum)
@@ -177,6 +187,11 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 					break
 				}
 			}
+
+			if sock.inFlightPacketSize.Load() < sock.foreignWindowSize.Load() {
+				// wake up the zwp
+				sock.windowNotEmpty.Broadcast()
+			}
 			sock.inFlightListLock.Unlock()
 		}
 
@@ -191,23 +206,19 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 		if relSeqNum == sock.nextExpectedByte.Load() {
 			if sock.readBuffer.Free() >= len(p.data) {
 				sock.writeIntoReadBuffer(p)
-
-				// pop earlyArrivalQueue elements if possible;
-				sock.earlyArrivalQueueLock.Lock()
 				for sock.earlyArrivalQueue.Len() != 0 && sock.earlyArrivalQueue[0].Priority == int(sock.nextExpectedByte.Load()) {
 
 					smallest := sock.earlyArrivalQueue[0].Value
 					heap.Pop(&sock.earlyArrivalQueue)
+					sock.earlyArrivalPacketSize.Sub(uint32(len(smallest.data)))
 					sock.writeIntoReadBuffer(smallest)
 					// delete(sock.earlyArrivalSeqNumSet, seqNum)
 				}
 				if sock.earlyArrivalQueue.Len() != 0 && sock.earlyArrivalQueue[0].Priority < int(sock.nextExpectedByte.Load()) {
 					fmt.Println("💀")
 				}
-				// maybe we don't need the early arrival queue anymore (because we're locking the entire socket)
-				sock.earlyArrivalQueueLock.Unlock()
 			} else {
-				fmt.Println("HandlePacket window size not respected")
+				// we got a zwp
 				return
 			}
 		} else if relSeqNum > sock.nextExpectedByte.Load() { // early arrivals
@@ -219,7 +230,7 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 					Priority: int(relSeqNum),
 				})
 				sock.earlyArrivalSeqNumSet[relSeqNum] = true
-				sock.earlyArrivePacketSize.Add(uint32(len(p.data)))
+				sock.earlyArrivalPacketSize.Add(uint32(len(p.data)))
 			}
 		} else {
 			// TODO: possibly return
@@ -248,60 +259,38 @@ func (sock *TcpSocket) HandleWrites() {
 	writeBufferLock := sock.writeBufferLock
 	isNotFull := sock.writeBufferIsNotFull
 	isNotEmpty := sock.writeBufferIsNotEmpty
+	conn := sock.conn
 
 	for {
-		// TODO: zero window probing!!!
-		// either we have sent enough packets, or the receiver can't take any more packets
-		for sock.foreignWindowSize.Load() == sock.inFlightPacketSize.Load() || sock.foreignWindowSize.Load() == 0 {
-			// we need to keep sending 1 byte until
-			fmt.Println("Should do zwp")
-			time.Sleep(time.Second * 3)
-			// write logic to keep sending one byte until we get acks
-		}
-
 		writeBufferLock.Lock()
 		for writeBuffer.IsEmpty() {
 			// wait till some vwrite call signals that the buffer has data in it
 			isNotEmpty.Wait()
 		}
 
-		// we know here that there is data to send
+		// TODO: zero window probing!!!
+		// either we have sent enough packets, or the receiver can't take any more packets
+		if sock.foreignWindowSize.Load() <= sock.inFlightPacketSize.Load() {
+			// we need to keep sending 1 byte until
+			// over here we need to make a packet of size 1
 
-		// calculate how many bytes to send in total
-		// either less than the
-		sizeToWrite := uint32(min(int(sock.foreignWindowSize.Load()), writeBuffer.Length()))
+			fmt.Println("Sending zwp")
 
-		// get all the bytes to send
-		if sizeToWrite == 0 {
+			oneByte := make([]byte, 1)
+
+			writeBuffer.Read(oneByte)
+
+			isNotFull.Broadcast()
 			writeBufferLock.Unlock()
-			fmt.Println("In HandleWrites: sizeToWrite is 0. Shouldn't happen ")
-			continue
-		}
-		payload := make([]byte, sizeToWrite)
-		writeBuffer.Read(payload)
 
-		// signal waiting vwrite calls that the buffer is no longer full
-		isNotFull.Broadcast()
-		writeBufferLock.Unlock()
-
-		// split bytes into segments, construct tcp packets and send them
-		conn := sock.conn
-
-		for sizeToWrite > 0 {
-			segmentSize := uint32(min(TcpMaxSegmentSize, int(sizeToWrite)))
-
-			// get hdr
-			// increase numBytesSent after constructing the header
 			ackHdr := sock.getAckHeader()
-			sock.numBytesSent.Add(segmentSize)
+			sock.numBytesSent.Add(1)
 
-			// add payload
-			ackHdr.Checksum = computeTCPChecksum(ackHdr, conn.localIP.NetIP(), conn.foreignIP.NetIP(), payload[:segmentSize])
+			ackHdr.Checksum = computeTCPChecksum(ackHdr, conn.localIP.NetIP(), conn.foreignIP.NetIP(), oneByte)
 			packet := TcpPacket{
 				header: *ackHdr,
-				data:   payload[:segmentSize],
+				data:   oneByte,
 			}
-			payload = payload[segmentSize:]
 
 			packetBytes := packet.Marshal()
 			err := sendTcp(conn.foreignIP, packetBytes)
@@ -315,12 +304,73 @@ func (sock *TcpSocket) HandleWrites() {
 				Priority:      int(packet.header.SeqNum - sock.myInitSeqNum),
 				TimeSent:      time.Now(),
 				Retransmitted: false,
+				isZwp:         true,
 			})
-			sock.inFlightListLock.Unlock()
-			// keep track of the size of packets in flight
-			// we should stop sending if size of packets in flight == window size
+			// zwp will get retransmitted
 			sock.inFlightPacketSize.Add(uint32(len(packet.data)))
-			sizeToWrite -= segmentSize
+			sock.windowNotEmpty.Wait()
+			fmt.Println("received ack for zwp")
+			sock.inFlightListLock.Unlock()
+		} else {
+
+			// we know here that there is data to send
+
+			// calculate how many bytes to send in total
+			// either less than the
+			sizeToWrite := uint32(min(int(sock.foreignWindowSize.Load()), writeBuffer.Length()))
+
+			fmt.Println("sending", sizeToWrite, "bytes")
+
+			// get all the bytes to send
+			if sizeToWrite == 0 {
+				writeBufferLock.Unlock()
+				fmt.Println("In HandleWrites: sizeToWrite is 0. Shouldn't happen ")
+				continue
+			}
+			payload := make([]byte, sizeToWrite)
+			writeBuffer.Read(payload)
+
+			// signal waiting vwrite calls that the buffer is no longer full
+			isNotFull.Broadcast()
+			writeBufferLock.Unlock()
+
+			// split bytes into segments, construct tcp packets and send them
+
+			for sizeToWrite > 0 {
+				segmentSize := uint32(min(TcpMaxSegmentSize, int(sizeToWrite)))
+
+				// get hdr
+				// increase numBytesSent after constructing the header
+				ackHdr := sock.getAckHeader()
+				sock.numBytesSent.Add(segmentSize)
+
+				// add payload
+				ackHdr.Checksum = computeTCPChecksum(ackHdr, conn.localIP.NetIP(), conn.foreignIP.NetIP(), payload[:segmentSize])
+				packet := TcpPacket{
+					header: *ackHdr,
+					data:   payload[:segmentSize],
+				}
+				payload = payload[segmentSize:]
+
+				packetBytes := packet.Marshal()
+				err := sendTcp(conn.foreignIP, packetBytes)
+				if err != nil {
+					fmt.Println("Error in handleWrites from SendMsgToDestIP: ", err)
+					break
+				}
+				sock.inFlightListLock.Lock()
+				sock.inFlightList.PushBack(&TcpPacketItem{
+					Value:         &packet,
+					Priority:      int(packet.header.SeqNum - sock.myInitSeqNum),
+					TimeSent:      time.Now(),
+					Retransmitted: false,
+				})
+				sock.inFlightListLock.Unlock()
+				// keep track of the size of packets in flight
+				// we should stop sending if size of packets in flight == window size
+				sock.inFlightPacketSize.Add(uint32(len(packet.data)))
+				sizeToWrite -= segmentSize
+			}
 		}
 	}
 }
@@ -334,7 +384,7 @@ func (sock *TcpSocket) HandleRetransmission() {
 		if inFlight.Len() != 0 {
 			item := inFlight.Front().Value.(*TcpPacketItem)
 
-			if time.Since(item.TimeSent) > sock.rto {
+			if time.Since(item.TimeSent) > time.Second*3 {
 				item.Retransmitted = true
 				packet := item.Value
 
@@ -347,7 +397,7 @@ func (sock *TcpSocket) HandleRetransmission() {
 		}
 		listLock.Unlock()
 
-		time.Sleep(sock.rto)
+		time.Sleep(time.Second * 3)
 	}
 }
 
@@ -399,4 +449,22 @@ func (sock *TcpSocket) String() string {
 func (sock *TcpSocket) updateRTO(obsRTT time.Duration) {
 	sock.srtt = time.Duration((float64(sock.srtt) * Alpha) + (float64(obsRTT) * (1 - Alpha)))
 	sock.rto = maxTime(RTOMin, minTime(time.Duration(float64(sock.srtt)*Beta), RTOMax))
+}
+
+func PrintBufferSizes(socketId int) {
+	sock := getSocketById(socketId)
+	if sock == nil {
+		fmt.Println("Invalid socket number")
+	} else {
+		fmt.Printf("Read buffer free space: %d\nWrite buffer free space: %d\n", sock.readBuffer.Free(), sock.writeBuffer.Free())
+	}
+}
+
+func PrintEarlyArrivalSize(socketId int) {
+	sock := getSocketById(socketId)
+	if sock == nil {
+		fmt.Println("Invalid socket number")
+	} else {
+		fmt.Printf("Early arrival num packets: %d\nEarly arrival queue size: %d\n", sock.earlyArrivalQueue.Len(), sock.earlyArrivalPacketSize.Load())
+	}
 }

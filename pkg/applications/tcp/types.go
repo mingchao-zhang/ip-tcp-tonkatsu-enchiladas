@@ -73,6 +73,7 @@ type TcpPacketItem struct {
 	Index         int // The Index of the item in the heap.
 	TimeSent      time.Time
 	Retransmitted bool
+	isZwp         bool
 }
 
 func (conn TcpConn) String() string {
