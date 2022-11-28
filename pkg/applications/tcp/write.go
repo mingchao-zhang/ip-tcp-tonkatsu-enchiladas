@@ -7,6 +7,8 @@ import (
 	"github.com/smallnest/ringbuffer"
 )
 
+var ErrWriteShutdown = errors.New("write to socket closed")
+
 func (conn *TcpConn) VWrite(buff []byte) (int, error) {
 	if len(buff) == 0 {
 		return 0, nil
@@ -14,7 +16,11 @@ func (conn *TcpConn) VWrite(buff []byte) (int, error) {
 
 	sock, ok := state.sockets[*conn]
 	if !ok {
-		return 0, errors.New("v_write() error: Bad file descriptor")
+		return 0, ErrNoSock
+	}
+
+	if !sock.canWrite {
+		return 0, ErrWriteShutdown
 	}
 	writeBuffer := sock.writeBuffer
 	totalBytesWritten := 0

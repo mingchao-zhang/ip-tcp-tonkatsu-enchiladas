@@ -123,7 +123,8 @@ func (sock *TcpSocket) writeIntoReadBuffer(p *TcpPacket) error {
 	sock.readBufferLock.Lock()
 	bytesWritten, err := sock.readBuffer.Write(p.data)
 	if err != nil {
-		fmt.Println("HandlePacket: Error while writing to the read buffer", err)
+		// TODO: check here if there is some issue in the future
+		// fmt.Println("HandlePacket: Error while writing to the read buffer", err)
 		sock.readBufferLock.Unlock()
 		return err
 	} else {

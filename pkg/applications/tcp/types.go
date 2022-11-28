@@ -1,6 +1,7 @@
 package tcp
 
 import (
+	"errors"
 	"fmt"
 	link "ip/pkg/ipinterface"
 	"ip/pkg/network"
@@ -37,6 +38,8 @@ const (
 	SHUTDOWN_READ  = 1
 	SHUTDOWN_WRITE = 2
 )
+
+var ErrNoSock = errors.New("Socket does not exist")
 
 var nextSockId = atomic.NewInt32(-1)
 

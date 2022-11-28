@@ -10,6 +10,10 @@ import (
 	"strings"
 )
 
+const (
+	ONE_MB = 1 << 20
+)
+
 func handleAccept(words []string) {
 	// a <port>
 	port, err := strconv.Atoi(words[1])
@@ -112,9 +116,15 @@ func handleReadString(words []string) {
 
 	// v_read() on 2 bytes returned 1; contents of buffer: 'o'
 	totalBytesRead := 0
+	sock := tcp.GetSocketById(socketId)
+	if sock == nil {
+		fmt.Printf("socketId %d doesn't exist\n", socketId)
+		return
+	}
+	conn := sock.GetConn()
 	if block {
 		for totalBytesRead < bytesToRead {
-			bytesRead, err := tcp.VRead(socketId, payload[totalBytesRead:])
+			bytesRead, err := conn.VRead(payload[totalBytesRead:])
 			if err != nil {
 				fmt.Println("Error while reading:", err)
 			}
@@ -122,7 +132,7 @@ func handleReadString(words []string) {
 		}
 
 	} else {
-		totalBytesRead, err = tcp.VRead(socketId, payload)
+		totalBytesRead, err = conn.VRead(payload)
 		if err != nil {
 			fmt.Println("Error while reading:", err)
 		}
@@ -181,6 +191,7 @@ func handleSendFile(words []string) {
 	payload, err := os.ReadFile(filename)
 	if err != nil {
 		fmt.Printf("cannot open %s\n", filename)
+		return
 	}
 
 	// send the payload
@@ -202,7 +213,54 @@ func handleReadFile(words []string) {
 		log.Printf("Invalid TCP port: %s", words[2])
 		return
 	}
-	fmt.Println(filename, port)
+
+	go func() {
+		// accept on the port
+		listener, err := tcp.VListen(uint16(port))
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		conn, err := listener.VAccept()
+		if err != nil {
+			log.Println(err)
+			return
+		}
+
+		file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0777)
+		if err != nil {
+			fmt.Printf("Unable to open file %s: %v", filename, err)
+			return
+		}
+		defer file.Close()
+
+		totalBytesRead := 0
+		buffer := make([]byte, tcp.BufferSize)
+		for {
+			bytesRead, err := conn.VRead(buffer)
+			if err != nil {
+				// TODO: handle the shutdown by shutting down the socket from our end
+				if err != tcp.ErrReadShutdown {
+					fmt.Println("error in VRead:", err)
+				}
+				return
+			} else {
+				// write to file and then increment total bytes read
+				bytesWritten, err := file.Write(buffer[:bytesRead])
+				if err != nil {
+					fmt.Println("Error while writing to file:", err)
+					return
+				}
+
+				if bytesWritten != bytesRead {
+					fmt.Println("Unable to write to file")
+					return
+				}
+				totalBytesRead += bytesRead
+			}
+		}
+	}()
+
 }
 
 func handleInput(text string, node *Node) {
