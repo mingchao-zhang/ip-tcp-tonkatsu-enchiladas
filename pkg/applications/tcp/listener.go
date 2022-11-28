@@ -3,10 +3,44 @@ package tcp
 import (
 	"errors"
 	"fmt"
+	link "ip/pkg/ipinterface"
 	"time"
 
 	"github.com/google/netstack/tcpip/header"
 )
+
+type TcpListener struct {
+	socketId int
+	ip       link.IntIP
+	port     uint16
+	ch       chan *TcpPacket
+	stop     chan bool
+}
+
+// VListen is a part of the network API available to applications
+// Callers do not need to lock
+func VListen(port uint16) (*TcpListener, error) {
+
+	state.lock.Lock()
+	defer state.lock.Unlock()
+
+	_, ok := state.ports[port]
+	if ok {
+		return nil, errors.New("vlisten: port already in use")
+	}
+
+	// at this point we know that the port is unused
+	state.ports[port] = true
+	state.listeners[port] = &TcpListener{
+		socketId: int(nextSockId.Add(1)),
+		ip:       state.myIP,
+		port:     port,
+		ch:       make(chan *TcpPacket),
+		stop:     make(chan bool),
+	}
+
+	return state.listeners[port], nil
+}
 
 func (l *TcpListener) VAccept() (*TcpConn, error) {
 	// make sure that the listener is still valid
@@ -124,4 +158,14 @@ func (l *TcpListener) VAccept() (*TcpConn, error) {
 		return nil, errors.New("connection closed")
 	}
 
+}
+
+// TODO
+func (l *TcpListener) VCloseListener() error {
+	// remove the listener from list of listeners
+	// remove all open sockets and send value on close channel
+	// send value on listener close to stop it from waiting on new connections
+
+	// call vclose on all of the listeners' open sockets
+	return nil
 }

@@ -94,7 +94,7 @@ func (p *TcpPacket) Marshal() []byte {
 	return append([]byte(tcphdr), p.data...)
 }
 
-func GetSocketInfo() *string {
+func GetSocketInfo() string {
 	state.lock.Lock()
 	defer state.lock.Unlock()
 	res := "socket  local-addr      port            dst-addr        port  status\n"
@@ -116,5 +116,5 @@ func GetSocketInfo() *string {
 		res += fmt.Sprintf("%s  ", sock.connState)
 		res += "\n"
 	}
-	return &res
+	return res
 }

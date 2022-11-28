@@ -33,6 +33,9 @@ const (
 	FIN_WAIT_2   = "FIN_WAIT_2"
 	CLOSE_WAIT   = "CLOSE_WAIT"
 	LAST_ACK     = "LAST_ACK"
+
+	SHUTDOWN_READ  = 1
+	SHUTDOWN_WRITE = 2
 )
 
 var nextSockId = atomic.NewInt32(-1)
@@ -55,14 +58,6 @@ type TcpPacket struct {
 	data   []byte
 }
 
-type TcpListener struct {
-	socketId int
-	ip       link.IntIP
-	port     uint16
-	ch       chan *TcpPacket
-	stop     chan bool
-}
-
 type TcpConn struct {
 	localIP     link.IntIP
 	localPort   uint16
@@ -78,6 +73,7 @@ type TcpPacketItem struct {
 	Index         int // The Index of the item in the heap.
 	TimeSent      time.Time
 	Retransmitted bool
+	isZwp         bool
 }
 
 func (conn TcpConn) String() string {
