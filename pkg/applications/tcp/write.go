@@ -7,13 +7,13 @@ import (
 	"github.com/smallnest/ringbuffer"
 )
 
-func VWrite(socketId int, buff []byte) (int, error) {
+func (conn *TcpConn) VWrite(buff []byte) (int, error) {
 	if len(buff) == 0 {
 		return 0, nil
 	}
 
-	sock := getSocketById(socketId)
-	if sock == nil {
+	sock, ok := state.sockets[*conn]
+	if !ok {
 		return 0, errors.New("v_write() error: Bad file descriptor")
 	}
 	writeBuffer := sock.writeBuffer

@@ -7,7 +7,7 @@ import (
 
 // we need to write len(buff) bytes from the read buffer to buff
 func VRead(socketId int, buff []byte) (int, error) {
-	sock := getSocketById(socketId)
+	sock := GetSocketById(socketId)
 	if sock == nil {
 		return 0, errors.New("v_read() error: Bad file descriptor")
 	}

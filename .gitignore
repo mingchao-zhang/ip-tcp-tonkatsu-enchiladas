@@ -1,7 +1,6 @@
 *~
 \#*#
 *.o
-*.txt
 .vagrant/
 .DS_Store
 node

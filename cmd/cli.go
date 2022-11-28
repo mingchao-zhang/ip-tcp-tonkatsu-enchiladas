@@ -81,14 +81,16 @@ func handleSendString(words []string) {
 		}
 	}
 
-	fmt.Println("The length of the input string is:", len(payload))
-
-	bytesWritten, err := tcp.VWrite(socketId, msg)
-	if err != nil {
-		fmt.Println(err)
-	} else {
-		fmt.Printf("v_write() on %d bytes returned %d\n", len(payload), bytesWritten)
-	}
+	fmt.Println("The length of the input string is:", len(msg))
+	sock := tcp.GetSocketById(socketId)
+	go func() {
+		bytesWritten, err := sock.GetConn().VWrite(msg)
+		if err != nil {
+			fmt.Println(err)
+		} else {
+			fmt.Printf("v_write() on %d bytes (socket %d) returned %d\n", len(msg), socketId, bytesWritten)
+		}
+	}()
 }
 
 func handleReadString(words []string) {
@@ -169,7 +171,27 @@ func handleSendFile(words []string) {
 		return
 	}
 
-	fmt.Println(filename, foreignIP, port)
+	// connect to the given ip and port
+	conn, err := tcp.VConnect(link.IntIPFromString(foreignIP), uint16(port))
+	if err != nil {
+		log.Println(err)
+	}
+
+	// read the file into payload array
+	payload, err := os.ReadFile(filename)
+	if err != nil {
+		fmt.Printf("cannot open %s\n", filename)
+	}
+
+	// send the payload
+	go func() {
+		bytesWritten, err := conn.VWrite(payload)
+		if err != nil {
+			fmt.Println(err)
+		} else {
+			fmt.Printf("v_write() on %d bytes returned %d\n", len(payload), bytesWritten)
+		}
+	}()
 }
 
 func handleReadFile(words []string) {
