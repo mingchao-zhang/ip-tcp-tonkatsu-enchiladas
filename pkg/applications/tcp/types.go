@@ -35,11 +35,13 @@ const (
 	CLOSE_WAIT   = "CLOSE_WAIT"
 	LAST_ACK     = "LAST_ACK"
 
+	MAX_TRIES = 3
+
 	SHUTDOWN_READ  = 1
 	SHUTDOWN_WRITE = 2
 )
 
-var ErrNoSock = errors.New("Socket does not exist")
+var ErrNoSock = errors.New("socket does not exist")
 
 var nextSockId = atomic.NewInt32(-1)
 
