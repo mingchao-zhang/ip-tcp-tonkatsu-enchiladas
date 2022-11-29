@@ -147,7 +147,6 @@ func (sock *TcpSocket) writeIntoReadBuffer(p *TcpPacket) error {
 }
 
 func (sock *TcpSocket) timeWait() {
-	fmt.Println("Reached timewait")
 	time.Sleep(time.Second * 60)
 	deleteConnSafe(sock.conn)
 }
@@ -205,7 +204,6 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 				if relSeq+payloadSize <= int(relLargestAckNum) {
 					if firstItem.Value.header.Flags&header.TCPFlagFin != 0 {
 						if sock.connState == FIN_WAIT_1 {
-							fmt.Println("received ack for fin with ack number", tcpHdr.AckNum-sock.myInitSeqNum)
 							sock.connState = FIN_WAIT_2
 						} else if sock.connState == LAST_ACK {
 							sock.connState = CLOSED
@@ -322,7 +320,6 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 				sock.readBufferIsNotEmpty.Broadcast()
 				sock.readBufferLock.Unlock()
 			} else if sock.connState == FIN_WAIT_2 {
-				fmt.Println("Reached time_wait - sent ack for: ", ackPacket.header.AckNum)
 				sock.connState = TIME_WAIT
 				go sock.timeWait()
 			} else if sock.connState == CLOSE_WAIT {
@@ -360,7 +357,6 @@ func (sock *TcpSocket) HandleWrites() {
 			if sock.canWrite {
 				sock.varLock.Unlock()
 				isNotEmpty.Wait()
-				fmt.Printf("woken up, current state is %s", sock.connState)
 			} else {
 				writeBufferLock.Unlock()
 				// send fin packet
@@ -400,7 +396,6 @@ func (sock *TcpSocket) HandleWrites() {
 				})
 
 				sock.inFlightListLock.Unlock()
-				fmt.Printf("Sending fin with sequence number: %d, acknumber: %d\n", finHdr.SeqNum-sock.myInitSeqNum, finHdr.AckNum-sock.foreignInitSeqNum)
 				if sock.connState == ESTABLISHED {
 					sock.connState = FIN_WAIT_1
 				} else if sock.connState == CLOSE_WAIT {

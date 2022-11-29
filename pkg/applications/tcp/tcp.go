@@ -36,7 +36,6 @@ func TcpHandler(rawMsg []byte, params []interface{}) {
 		// check if there is a server listening on that port
 		listener, ok := state.listeners[tcpConn.localPort]
 		if !ok {
-			fmt.Printf("Packet dropped in TcpHandler: port %d is not a listen port.\n", tcpConn.localPort)
 			return
 		}
 		listener.ch <- tcpPacket
@@ -57,6 +56,26 @@ func TCPInit(fwdTable *network.FwdTable) {
 		fwdTable:       fwdTable,
 		nextUnusedPort: 2000,
 		myIP:           link.GetSmallestLocalIP(fwdTable.IpInterfaces),
+	}
+}
+
+// Safe
+func GetSocketById(id int) *TcpSocket {
+	state.lock.Lock()
+	defer state.lock.Unlock()
+
+	for _, sock := range state.sockets {
+		if sock.sockId == id {
+			return sock
+		}
+	}
+
+	return nil
+}
+
+func CloseAll() {
+	for _, sock := range state.sockets {
+		sock.conn.VClose()
 	}
 }
 
