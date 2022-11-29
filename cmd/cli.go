@@ -86,7 +86,6 @@ func handleSendString(words []string) {
 		}
 	}
 
-	fmt.Println("The length of the input string is:", len(msg))
 	sock := tcp.GetSocketById(socketId)
 	go func() {
 		bytesWritten, err := sock.GetConn().VWrite(msg)
@@ -169,7 +168,10 @@ func handleCloseTcpSocket(words []string) {
 	if err != nil {
 		log.Printf("Invalid socket Id: %s", words[1])
 	}
-	fmt.Println(socketId)
+	sock := tcp.GetSocketById(socketId)
+	if sock != nil {
+		sock.GetConn().VClose()
+	}
 }
 
 func handleSendFile(words []string) {
@@ -206,7 +208,6 @@ func handleSendFile(words []string) {
 		} else {
 			fmt.Printf("v_write() on %d bytes returned %d\n", len(payload), bytesWritten)
 		}
-		fmt.Println("Calling VClose")
 		conn.VClose()
 	}()
 }
@@ -250,7 +251,6 @@ func handleReadFile(words []string) {
 					fmt.Println("finished reading in VRead:", err)
 				} else if err == tcp.ErrReadShutdown {
 					fmt.Println("Finished reading from connection")
-					conn.VClose()
 				}
 			} else {
 				// write to file and then increment total bytes read
@@ -267,8 +267,17 @@ func handleReadFile(words []string) {
 				totalBytesRead += bytesRead
 			}
 		}
+
+		conn.VClose()
+		listener.VClose()
 	}()
 
+}
+
+func handleQuit(node *Node) {
+	// tcp.CloseAll()
+	node.close()
+	os.Exit(0)
 }
 
 func handleInput(text string, node *Node) {
@@ -276,8 +285,7 @@ func handleInput(text string, node *Node) {
 	if len(words) == 0 {
 		return
 	} else if words[0] == "q" && len(words) == 1 {
-		node.close()
-		os.Exit(0)
+		handleQuit(node)
 	} else if len(words) == 2 && words[0] == "a" {
 		handleAccept(words)
 	} else if len(words) == 3 && words[0] == "c" {

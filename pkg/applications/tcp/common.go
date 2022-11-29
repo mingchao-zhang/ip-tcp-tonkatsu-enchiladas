@@ -14,20 +14,6 @@ const (
 	IpProtoTcp         = header.TCPProtocolNumber
 )
 
-// Safe
-func GetSocketById(id int) *TcpSocket {
-	state.lock.Lock()
-	defer state.lock.Unlock()
-
-	for _, sock := range state.sockets {
-		if sock.sockId == id {
-			return sock
-		}
-	}
-
-	return nil
-}
-
 // allocatePort unsafely (without locking)
 // returns an unused port and modify state
 func allocatePortUnsafe() uint16 {

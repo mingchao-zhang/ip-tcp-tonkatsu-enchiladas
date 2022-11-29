@@ -60,96 +60,76 @@ func VConnect(foreignIP link.IntIP, foreignPort uint16) (*TcpConn, error) {
 
 	// wait for a SYN-ACK
 	// possibly also wait on stop
-	numTries := 0
-	for numTries < MAX_TRIES {
-		numTries += 1
 
-		err = sendTcp(foreignIP, packetBytes)
+	err = sendTcp(foreignIP, packetBytes)
+	if err != nil {
+		deleteConnSafe(&conn)
+		log.Fatalln("Unable to send packet in connect() (some problem with IP)")
+		return nil, err
+	}
+
+	timeoutSynAck := time.After(time.Millisecond * 5)
+	select {
+	case packet := <-sock.ch:
+		receivedHdr := packet.header
+		// check if the appropriate number was acked
+		if receivedHdr.Flags != header.TCPFlagAck|header.TCPFlagSyn {
+			deleteConnSafe(&conn)
+			return nil, errors.New("did not receive SYN-ACK during handshake")
+		} else if !isValidTcpCheckSum(&packet.header, conn.foreignIP.NetIP(), conn.localIP.NetIP(), packet.data) {
+			deleteConnSafe(&conn)
+			return nil, errors.New("incorrect checksum in syn-ack packet")
+		} else if packet.header.AckNum-sock.myInitSeqNum != 1 {
+			deleteConnSafe(&conn)
+			return nil, errors.New("incorrect ack number in the SYN-ACK packet")
+		}
+
+		sock.foreignInitSeqNum = receivedHdr.SeqNum
+		sock.nextExpectedByte.Store(1)
+		sock.largestAckReceived.Store(packet.header.AckNum)
+
+		// send ACK
+		tcpHdr = header.TCPFields{
+			SrcPort:    conn.localPort,
+			DstPort:    conn.foreignPort,
+			SeqNum:     receivedHdr.AckNum,
+			AckNum:     receivedHdr.SeqNum + 1,
+			DataOffset: TcpHeaderLen,
+			Flags:      header.TCPFlagAck,
+			WindowSize: uint16(BufferSize),
+			// To compute
+			Checksum:      0,
+			UrgentPointer: 0,
+		}
+		payload := make([]byte, 0)
+		tcpHdr.Checksum = computeTCPChecksum(&tcpHdr, conn.localIP.NetIP(), conn.foreignIP.NetIP(), payload)
+		ackPacket := TcpPacket{
+			header: tcpHdr,
+			data:   payload,
+		}
+		// what if this ack is dropped???
+		packetBytes = ackPacket.Marshal()
+		// fmt.Println("resending ACK")
+		err := sendTcp(foreignIP, packetBytes)
 		if err != nil {
 			deleteConnSafe(&conn)
 			log.Fatalln("Unable to send packet in connect() (some problem with IP)")
-			return nil, err
 		}
 
-		timeoutSynAck := time.After(time.Millisecond * 5)
-		select {
-		case packet := <-sock.ch:
-			receivedHdr := packet.header
-			// check if the appropriate number was acked
-			if (receivedHdr.Flags != header.TCPFlagAck|header.TCPFlagSyn) && (numTries == MAX_TRIES) {
-				deleteConnSafe(&conn)
-				return nil, errors.New("did not receive SYN-ACK during handshake")
-			} else if !isValidTcpCheckSum(&packet.header, conn.foreignIP.NetIP(), conn.localIP.NetIP(), packet.data) {
-				deleteConnSafe(&conn)
-				return nil, errors.New("incorrect checksum in syn-ack packet")
-			} else if packet.header.AckNum-sock.myInitSeqNum != 1 {
-				deleteConnSafe(&conn)
-				return nil, errors.New("incorrect ack number in the SYN-ACK packet")
-			}
+		// conn established
+		sock.connState = ESTABLISHED
+		sock.foreignWindowSize.Store(uint32(packet.header.WindowSize))
+		go sock.HandleConnection()
+		return &conn, nil
 
-			sock.foreignInitSeqNum = receivedHdr.SeqNum
-			sock.nextExpectedByte.Store(1)
-			sock.largestAckReceived.Store(packet.header.AckNum)
+	case <-timeoutSynAck:
+		fmt.Println("handshake timed out")
+		deleteConnSafe(&conn)
+		return nil, errors.New("connection timed out")
 
-			// send ACK
-			tcpHdr = header.TCPFields{
-				SrcPort:    conn.localPort,
-				DstPort:    conn.foreignPort,
-				SeqNum:     receivedHdr.AckNum,
-				AckNum:     receivedHdr.SeqNum + 1,
-				DataOffset: TcpHeaderLen,
-				Flags:      header.TCPFlagAck,
-				WindowSize: uint16(BufferSize),
-				// To compute
-				Checksum:      0,
-				UrgentPointer: 0,
-			}
-			payload := make([]byte, 0)
-			tcpHdr.Checksum = computeTCPChecksum(&tcpHdr, conn.localIP.NetIP(), conn.foreignIP.NetIP(), payload)
-			ackPacket := TcpPacket{
-				header: tcpHdr,
-				data:   payload,
-			}
-			// what if this ack is dropped???
-			packetBytes = ackPacket.Marshal()
-			// fmt.Println("resending ACK")
-			err := sendTcp(foreignIP, packetBytes)
-			if err != nil {
-				deleteConnSafe(&conn)
-				log.Fatalln("Unable to send packet in connect() (some problem with IP)")
-			}
-
-			// conn established
-			sock.connState = ESTABLISHED
-			sock.foreignWindowSize.Store(uint32(packet.header.WindowSize))
-			go sock.HandleConnection()
-			go func() {
-				// we need to send the ack a bunch of times in case it is dropped
-				// it is okay if it gets sent late
-				time.Sleep(sock.srtt)
-				n := 0
-				for n < MAX_TRIES-1 {
-					n += 1
-					err := sendTcp(foreignIP, packetBytes)
-					if err != nil {
-						deleteConnSafe(&conn)
-						log.Fatalln("Unable to send packet in connect() (some problem with IP)")
-					}
-					time.Sleep(time.Millisecond * 2)
-				}
-			}()
-			return &conn, nil
-
-		case <-timeoutSynAck:
-			if numTries == MAX_TRIES {
-				fmt.Println("handshake timed out")
-				deleteConnSafe(&conn)
-				return nil, errors.New("connection timed out")
-			}
-		case <-sock.stop:
-			deleteConnSafe(&conn)
-			return nil, errors.New("connection closed")
-		}
+	case <-sock.stop:
+		deleteConnSafe(&conn)
+		return nil, errors.New("connection closed")
 	}
 	return nil, errors.New("impossible case")
 }

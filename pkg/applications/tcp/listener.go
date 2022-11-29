@@ -110,47 +110,40 @@ func (l *TcpListener) VAccept() (*TcpConn, error) {
 		}
 
 		packetBytes := synAckPacket.Marshal()
-		numTries := 0
-		for numTries < MAX_TRIES {
-			numTries += 1
 
-			err = sendTcp(conn.foreignIP, packetBytes)
-			if err != nil {
-				deleteConnSafe(&conn)
-				return nil, err
-			}
-			sock.connState = SYN_SENT
+		err = sendTcp(conn.foreignIP, packetBytes)
+		if err != nil {
+			deleteConnSafe(&conn)
+			return nil, err
+		}
+		sock.connState = SYN_SENT
 
-			timeout := time.After(time.Millisecond * 10)
-			select {
-			case p := <-sock.ch:
-				if (p.header.Flags & header.TCPFlagAck) != 0 {
-					// we got an ack from the client
-					if p.header.SeqNum-sock.foreignInitSeqNum != 1 {
-						fmt.Println("Received unexpected sequence number")
-						deleteConnSafe(&conn)
-						return nil, errors.New("unexpected sequence number received")
-					}
-					if p.header.AckNum-sock.myInitSeqNum != 1 {
-						fmt.Println("Received unexpected ack number")
-						deleteConnSafe(&conn)
-						return nil, errors.New("unexpected ack number received")
-					}
-
-					// at this point we have established a connection
-					// check if the appropriate number was acked
-					sock.connState = ESTABLISHED
-					sock.foreignWindowSize.Store(uint32(p.header.WindowSize))
-				} else {
-					// fmt.Println("Earlier received:", p.data)
-				}
-			case <-timeout:
-				if numTries == MAX_TRIES {
-					fmt.Println("handshake timed out")
+		timeout := time.After(time.Millisecond * 10)
+		select {
+		case p := <-sock.ch:
+			if (p.header.Flags & header.TCPFlagAck) != 0 {
+				// we got an ack from the client
+				if p.header.SeqNum-sock.foreignInitSeqNum != 1 {
+					fmt.Println("Received unexpected sequence number")
 					deleteConnSafe(&conn)
-					return nil, errors.New("connection timed out")
+					return nil, errors.New("unexpected sequence number received")
 				}
+				if p.header.AckNum-sock.myInitSeqNum != 1 {
+					fmt.Println("Received unexpected ack number")
+					deleteConnSafe(&conn)
+					return nil, errors.New("unexpected ack number received")
+				}
+
+				// at this point we have established a connection
+				// check if the appropriate number was acked
+				sock.connState = ESTABLISHED
+				sock.foreignWindowSize.Store(uint32(p.header.WindowSize))
 			}
+		case <-timeout:
+			fmt.Println("handshake timed out")
+			deleteConnSafe(&conn)
+			return nil, errors.New("connection timed out")
+
 		}
 		go sock.HandleConnection()
 
@@ -163,7 +156,7 @@ func (l *TcpListener) VAccept() (*TcpConn, error) {
 }
 
 // TODO
-func (l *TcpListener) VCloseListener() error {
+func (l *TcpListener) VClose() error {
 	// remove the listener from list of listeners
 	// remove all open sockets and send value on close channel
 	// send value on listener close to stop it from waiting on new connections
@@ -176,6 +169,8 @@ func (l *TcpListener) VCloseListener() error {
 			sock.conn.VClose()
 		}
 	}
+
+	delete(state.listeners, l.port)
 	// call vclose on all of the listeners' open sockets
 	return nil
 }

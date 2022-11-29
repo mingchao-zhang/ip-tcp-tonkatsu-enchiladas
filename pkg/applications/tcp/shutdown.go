@@ -39,6 +39,11 @@ func (conn *TcpConn) VShutdown(sdType int) error {
 		sock.writeBufferIsNotEmpty.Broadcast()
 		sock.writeBufferLock.Unlock()
 	}
+	if sdType&SHUTDOWN_READ != 0 {
+		sock.readBufferLock.Lock()
+		sock.readBufferIsNotEmpty.Broadcast()
+		sock.readBufferLock.Unlock()
+	}
 
 	return nil
 }
