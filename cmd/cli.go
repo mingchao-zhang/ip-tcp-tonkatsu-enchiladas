@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -187,12 +188,15 @@ func handleSendFile(words []string) {
 		log.Println(err)
 	}
 
+	time.Sleep(50 * time.Millisecond)
 	// read the file into payload array
 	payload, err := os.ReadFile(filename)
 	if err != nil {
 		fmt.Printf("cannot open %s\n", filename)
 		return
 	}
+
+	time.Sleep(50 * time.Millisecond)
 
 	// send the payload
 	go func() {

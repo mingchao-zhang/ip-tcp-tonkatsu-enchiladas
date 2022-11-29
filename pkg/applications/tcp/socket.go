@@ -104,8 +104,8 @@ func MakeTcpSocket(connState string, tcpConn *TcpConn, foreignInitSeqNum uint32)
 		largestAckReceived: atomic.NewUint32(0),
 		foreignWindowSize:  atomic.NewUint32(0),
 
-		srtt: time.Microsecond * 50,
-		rto:  time.Microsecond * 50,
+		srtt: time.Millisecond * 5,
+		rto:  time.Microsecond * 500,
 
 		varLock: &deadlock.Mutex{},
 	}
@@ -417,7 +417,7 @@ func (sock *TcpSocket) HandleWrites() {
 			// we need to keep sending 1 byte until
 			// over here we need to make a packet of size 1
 
-			fmt.Println("Sending zwp")
+			// fmt.Println("Sending zwp")
 
 			oneByte := make([]byte, 1)
 
@@ -461,7 +461,7 @@ func (sock *TcpSocket) HandleWrites() {
 			// either less than the
 			sizeToWrite := uint32(min(int(sock.foreignWindowSize.Load()), writeBuffer.Length()))
 
-			fmt.Println("sending", sizeToWrite, "bytes")
+			// fmt.Println("sending", sizeToWrite, "bytes")
 
 			// get all the bytes to send
 			if sizeToWrite == 0 {
@@ -526,7 +526,7 @@ func (sock *TcpSocket) HandleRetransmission() {
 		if inFlight.Len() != 0 {
 			item := inFlight.Front().Value.(*TcpPacketItem)
 
-			if time.Since(item.TimeSent) > sock.srtt {
+			if time.Since(item.TimeSent) > sock.rto {
 				item.Retransmitted = true
 				packet := item.Value
 
@@ -539,7 +539,7 @@ func (sock *TcpSocket) HandleRetransmission() {
 		}
 		listLock.Unlock()
 
-		time.Sleep(sock.srtt)
+		time.Sleep(sock.rto)
 	}
 }
 

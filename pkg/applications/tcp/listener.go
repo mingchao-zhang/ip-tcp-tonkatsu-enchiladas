@@ -121,7 +121,7 @@ func (l *TcpListener) VAccept() (*TcpConn, error) {
 			}
 			sock.connState = SYN_SENT
 
-			timeout := time.After(sock.srtt)
+			timeout := time.After(time.Millisecond * 10)
 			select {
 			case p := <-sock.ch:
 				if (p.header.Flags & header.TCPFlagAck) != 0 {
@@ -141,10 +141,12 @@ func (l *TcpListener) VAccept() (*TcpConn, error) {
 					// check if the appropriate number was acked
 					sock.connState = ESTABLISHED
 					sock.foreignWindowSize.Store(uint32(p.header.WindowSize))
+				} else {
+					// fmt.Println("Earlier received:", p.data)
 				}
 			case <-timeout:
 				if numTries == MAX_TRIES {
-					fmt.Println("timed out")
+					fmt.Println("handshake timed out")
 					deleteConnSafe(&conn)
 					return nil, errors.New("connection timed out")
 				}
