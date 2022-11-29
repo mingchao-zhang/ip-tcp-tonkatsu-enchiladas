@@ -202,6 +202,8 @@ func handleSendFile(words []string) {
 		} else {
 			fmt.Printf("v_write() on %d bytes returned %d\n", len(payload), bytesWritten)
 		}
+		fmt.Println("Calling VClose")
+		conn.VClose()
 	}()
 }
 
@@ -236,14 +238,16 @@ func handleReadFile(words []string) {
 
 		totalBytesRead := 0
 		buffer := make([]byte, tcp.BufferSize)
-		for {
+		for conn.GetState() == tcp.ESTABLISHED {
 			bytesRead, err := conn.VRead(buffer)
 			if err != nil {
 				// TODO: handle the shutdown by shutting down the socket from our end
 				if err != tcp.ErrReadShutdown {
-					fmt.Println("error in VRead:", err)
+					fmt.Println("finished reading in VRead:", err)
+				} else if err == tcp.ErrReadShutdown {
+					fmt.Println("Finished reading from connection")
+					conn.VClose()
 				}
-				return
 			} else {
 				// write to file and then increment total bytes read
 				bytesWritten, err := file.Write(buffer[:bytesRead])

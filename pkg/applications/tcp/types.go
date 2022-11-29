@@ -33,12 +33,15 @@ const (
 	FIN_WAIT_1   = "FIN_WAIT_1"
 	FIN_WAIT_2   = "FIN_WAIT_2"
 	CLOSE_WAIT   = "CLOSE_WAIT"
+	TIME_WAIT    = "TIME_WAIT"
 	LAST_ACK     = "LAST_ACK"
+	CLOSED       = "CLOSED"
 
 	MAX_TRIES = 3
 
 	SHUTDOWN_READ  = 1
 	SHUTDOWN_WRITE = 2
+	SHUTDOWN_BOTH  = SHUTDOWN_READ | SHUTDOWN_WRITE
 )
 
 var ErrNoSock = errors.New("socket does not exist")

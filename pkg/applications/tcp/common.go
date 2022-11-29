@@ -50,6 +50,15 @@ func deleteConnSafe(conn *TcpConn) {
 	state.lock.Unlock()
 }
 
+func (conn *TcpConn) GetState() string {
+	sock, ok := state.sockets[*conn]
+	if !ok {
+		return "NEVER"
+	} else {
+		return sock.connState
+	}
+}
+
 func minTime(a time.Duration, b time.Duration) time.Duration {
 	if a < b {
 		return a
