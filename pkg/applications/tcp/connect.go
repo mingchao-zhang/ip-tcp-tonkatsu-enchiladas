@@ -76,7 +76,7 @@ func VConnect(foreignIP link.IntIP, foreignPort uint16) (*TcpConn, error) {
 		case packet := <-sock.ch:
 			receivedHdr := packet.header
 			// check if the appropriate number was acked
-			if (receivedHdr.Flags&header.TCPFlagSyn == 0) || (receivedHdr.Flags&header.TCPFlagAck == 0) {
+			if (receivedHdr.Flags != header.TCPFlagAck|header.TCPFlagSyn) && (numTries == MAX_TRIES) {
 				deleteConnSafe(&conn)
 				return nil, errors.New("did not receive SYN-ACK during handshake")
 			} else if !isValidTcpCheckSum(&packet.header, conn.foreignIP.NetIP(), conn.localIP.NetIP(), packet.data) {
@@ -89,6 +89,7 @@ func VConnect(foreignIP link.IntIP, foreignPort uint16) (*TcpConn, error) {
 
 			sock.foreignInitSeqNum = receivedHdr.SeqNum
 			sock.nextExpectedByte.Store(1)
+			sock.largestAckReceived.Store(packet.header.AckNum)
 
 			// send ACK
 			tcpHdr = header.TCPFields{
@@ -129,7 +130,6 @@ func VConnect(foreignIP link.IntIP, foreignPort uint16) (*TcpConn, error) {
 				n := 0
 				for n < MAX_TRIES-1 {
 					n += 1
-					// fmt.Println("resending ACK")
 					err := sendTcp(foreignIP, packetBytes)
 					if err != nil {
 						deleteConnSafe(&conn)

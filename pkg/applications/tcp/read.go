@@ -2,6 +2,7 @@ package tcp
 
 import (
 	"errors"
+	"fmt"
 	"log"
 )
 
@@ -26,7 +27,14 @@ func (conn *TcpConn) VRead(buff []byte) (int, error) {
 		// we wait until there are more bytes to read
 		if readBuffer.IsEmpty() {
 			// wait on a condition
-			isNotEmpty.Wait()
+			if sock.connState == ESTABLISHED {
+				isNotEmpty.Wait()
+			} else if sock.connState == CLOSE_WAIT {
+				sock.readBufferLock.Unlock()
+				return 0, ErrReadShutdown
+			} else {
+				fmt.Println("other state: ", sock.connState)
+			}
 		} else {
 			bytesRead, err := readBuffer.Read(buff)
 			sock.readBufferLock.Unlock()

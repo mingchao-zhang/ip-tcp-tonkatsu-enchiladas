@@ -25,6 +25,9 @@ type TcpSocket struct {
 	canRead  bool
 	canWrite bool
 
+	closed   bool
+	isClosed chan bool
+
 	readBuffer            *ringbuffer.RingBuffer
 	readBufferLock        *deadlock.Mutex
 	readBufferIsNotEmpty  *sync.Cond
@@ -73,6 +76,8 @@ func MakeTcpSocket(connState string, tcpConn *TcpConn, foreignInitSeqNum uint32)
 
 		canRead:  true,
 		canWrite: true,
+
+		isClosed: make(chan bool),
 
 		readBuffer:             ringbuffer.New(BufferSize),
 		readBufferLock:         &deadlock.Mutex{},
@@ -141,9 +146,19 @@ func (sock *TcpSocket) writeIntoReadBuffer(p *TcpPacket) error {
 	return nil
 }
 
+func (sock *TcpSocket) timeWait() {
+	fmt.Println("Reached timewait")
+	time.Sleep(time.Second * 60)
+	deleteConnSafe(sock.conn)
+}
+
 func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 	sock.varLock.Lock()
 	defer sock.varLock.Unlock()
+
+	if sock.closed {
+		return
+	}
 
 	// validate checksum in the packet
 	tcpHdr := p.header
@@ -151,6 +166,8 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 		fmt.Println("invalid checksum in handle packet")
 		return
 	}
+
+	relSeqNum := tcpHdr.SeqNum - sock.foreignInitSeqNum
 
 	if tcpHdr.Flags == header.TCPFlagAck {
 		packetWindowSize := uint32(tcpHdr.WindowSize)
@@ -183,6 +200,19 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 				payloadSize := len(firstItem.Value.data)
 
 				if relSeq+payloadSize <= int(relLargestAckNum) {
+					if firstItem.Value.header.Flags == header.TCPFlagFin {
+						if sock.connState == FIN_WAIT_1 {
+							sock.connState = FIN_WAIT_2
+						} else if sock.connState == LAST_ACK {
+							sock.connState = CLOSED
+							sock.isClosed <- true
+							sock.closed = true
+							deleteConnSafe(sock.conn)
+							sock.inFlightListLock.Unlock()
+							// close everything
+							return
+						}
+					}
 					inFlight.Remove(inFlight.Front())
 					sock.inFlightPacketSize.Sub(uint32(payloadSize))
 					if !firstItem.Retransmitted {
@@ -206,7 +236,6 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 		}
 
 		// 2. try to write data either in the read buffer or in the heap
-		relSeqNum := tcpHdr.SeqNum - sock.foreignInitSeqNum
 
 		if relSeqNum == sock.nextExpectedByte.Load() {
 			if sock.readBuffer.Free() >= len(p.data) {
@@ -216,6 +245,20 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 					smallest := sock.earlyArrivalQueue[0].Value
 					heap.Pop(&sock.earlyArrivalQueue)
 					sock.earlyArrivalPacketSize.Sub(uint32(len(smallest.data)))
+					if smallest.header.Flags == header.TCPFlagFin {
+						fmt.Println("Popped fin off EAQ")
+						if sock.connState == ESTABLISHED {
+							sock.connState = CLOSE_WAIT
+							sock.readBufferLock.Lock()
+							sock.readBufferIsNotEmpty.Broadcast()
+							sock.readBufferLock.Unlock()
+						} else if sock.connState == FIN_WAIT_2 {
+							sock.connState = TIME_WAIT
+							sock.timeWait()
+						} else {
+							fmt.Println("I genuinely hope this does not happen")
+						}
+					}
 					sock.writeIntoReadBuffer(smallest)
 					// delete(sock.earlyArrivalSeqNumSet, seqNum)
 				}
@@ -237,7 +280,7 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 				sock.earlyArrivalSeqNumSet[relSeqNum] = true
 				sock.earlyArrivalPacketSize.Add(uint32(len(p.data)))
 			}
-		} // else we received a packet already acked - so we send
+		}
 
 		// 4. send an ack back
 		// remember to increase nextExpectedByte before constructing the header
@@ -252,7 +295,48 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 		if err != nil {
 			log.Println("sendTcp: ", err)
 		}
-	} // handle other cases
+	} else if p.header.Flags&header.TCPFlagFin != 0 {
+		// send ack
+		// we need to check if it is the next expected byte, if not then add it to the early arrival
+		if relSeqNum == sock.nextExpectedByte.Load() {
+			ackHdr := sock.getAckHeader()
+			payload := make([]byte, 0)
+			ackHdr.Checksum = computeTCPChecksum(ackHdr, sock.conn.localIP.NetIP(), sock.conn.foreignIP.NetIP(), payload)
+			ackPacket := TcpPacket{
+				header: *ackHdr,
+				data:   payload,
+			}
+			err := sendTcp(sock.conn.foreignIP, ackPacket.Marshal())
+			if err != nil {
+				log.Println("sendTcp: ", err)
+			}
+			if sock.connState == ESTABLISHED {
+				sock.connState = CLOSE_WAIT
+				sock.readBufferLock.Lock()
+				sock.readBufferIsNotEmpty.Broadcast()
+				sock.readBufferLock.Unlock()
+			} else if sock.connState == FIN_WAIT_2 {
+				sock.connState = TIME_WAIT
+				sock.timeWait()
+			} else if sock.connState == CLOSE_WAIT {
+				fmt.Println("Received fin when in close wait, socket can write: ", sock.canWrite)
+			} else {
+				fmt.Println("I sincerely hope this does not happen")
+			}
+
+		} else if relSeqNum > sock.nextExpectedByte.Load() { // early arrivals
+			// add it to the out of order queue only if we haven't seen it before
+			_, ok := sock.earlyArrivalSeqNumSet[relSeqNum]
+			if !ok {
+				heap.Push(&sock.earlyArrivalQueue, &TcpPacketItem{
+					Value:    p,
+					Priority: int(relSeqNum),
+				})
+				sock.earlyArrivalSeqNumSet[relSeqNum] = true
+				sock.earlyArrivalPacketSize.Add(uint32(len(p.data)))
+			}
+		}
+	}
 }
 
 func (sock *TcpSocket) HandleWrites() {
@@ -265,8 +349,66 @@ func (sock *TcpSocket) HandleWrites() {
 	for {
 		writeBufferLock.Lock()
 		for writeBuffer.IsEmpty() {
+			sock.varLock.Lock()
+			if sock.canWrite {
+				sock.varLock.Unlock()
+				isNotEmpty.Wait()
+				fmt.Printf("woken up, current state is %s", sock.connState)
+			} else {
+				writeBufferLock.Unlock()
+				// send fin packet
+				finHdr := header.TCPFields{
+					SrcPort: sock.conn.localPort,
+					DstPort: sock.conn.foreignPort,
+					SeqNum:  sock.myInitSeqNum + sock.numBytesSent.Load() + 1,
+					// convert to absolute next expected byte
+					AckNum:     sock.nextExpectedByte.Load() + sock.foreignInitSeqNum,
+					DataOffset: TcpHeaderLen,
+					Flags:      header.TCPFlagFin,
+					WindowSize: uint16(sock.readBuffer.Free()),
+					// To compute
+					Checksum:      0,
+					UrgentPointer: 0,
+				}
+				sock.numBytesSent.Add(1)
+
+				finHdr.Checksum = computeTCPChecksum(&finHdr, conn.localIP.NetIP(), conn.foreignIP.NetIP(), []byte{})
+				packet := TcpPacket{
+					header: finHdr,
+					data:   []byte{},
+				}
+
+				packetBytes := packet.Marshal()
+				err := sendTcp(conn.foreignIP, packetBytes)
+				if err != nil {
+					fmt.Println("Error in handleWrites from SendMsgToDestIP: ", err)
+					break
+				}
+				sock.inFlightListLock.Lock()
+				sock.inFlightList.PushBack(&TcpPacketItem{
+					Value:         &packet,
+					Priority:      int(packet.header.SeqNum - sock.myInitSeqNum),
+					TimeSent:      time.Now(),
+					Retransmitted: false,
+				})
+
+				sock.inFlightListLock.Unlock()
+				fmt.Println("Sending fin")
+				if sock.connState == ESTABLISHED {
+					sock.connState = FIN_WAIT_1
+				} else if sock.connState == CLOSE_WAIT {
+					sock.connState = LAST_ACK
+				} else {
+					fmt.Println("I hope this does not happen")
+				}
+				// now that we have added the fin packet to the queue we can stop handling writes
+				sock.varLock.Unlock()
+				return
+
+			}
+			// we
 			// wait till some vwrite call signals that the buffer has data in it
-			isNotEmpty.Wait()
+
 		}
 
 		// TODO: zero window probing!!!
@@ -310,7 +452,6 @@ func (sock *TcpSocket) HandleWrites() {
 			// zwp will get retransmitted
 			sock.inFlightPacketSize.Add(uint32(len(packet.data)))
 			sock.windowNotEmpty.Wait()
-			// fmt.Println("received ack for zwp")
 			sock.inFlightListLock.Unlock()
 		} else {
 
@@ -380,7 +521,7 @@ func (sock *TcpSocket) HandleRetransmission() {
 	conn := sock.conn
 	inFlight := sock.inFlightList
 	listLock := sock.inFlightListLock
-	for {
+	for !sock.closed {
 		listLock.Lock()
 		if inFlight.Len() != 0 {
 			item := inFlight.Front().Value.(*TcpPacketItem)
@@ -405,9 +546,13 @@ func (sock *TcpSocket) HandleRetransmission() {
 func (sock *TcpSocket) HandleConnection() {
 	go sock.HandleWrites()
 	go sock.HandleRetransmission()
-	for {
-		p := <-sock.ch
-		go sock.HandlePacket(p)
+	for !sock.closed {
+		select {
+		case p := <-sock.ch:
+			go sock.HandlePacket(p)
+		case <-sock.isClosed:
+			return
+		}
 	}
 
 	// have a thread waiting for data in the write buffer,

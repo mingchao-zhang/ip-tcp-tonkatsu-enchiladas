@@ -168,6 +168,14 @@ func (l *TcpListener) VCloseListener() error {
 	// remove all open sockets and send value on close channel
 	// send value on listener close to stop it from waiting on new connections
 
+	state.lock.Lock()
+	defer state.lock.Unlock()
+
+	for _, sock := range state.sockets {
+		if (sock.conn.localPort == l.port) && sock.conn.localIP == l.ip {
+			sock.conn.VClose()
+		}
+	}
 	// call vclose on all of the listeners' open sockets
 	return nil
 }
