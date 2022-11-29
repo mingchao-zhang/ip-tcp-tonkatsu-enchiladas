@@ -250,7 +250,6 @@ func handleReadFile(words []string) {
 					fmt.Println("finished reading in VRead:", err)
 				} else if err == tcp.ErrReadShutdown {
 					fmt.Println("Finished reading from connection")
-					conn.VClose()
 				}
 			} else {
 				// write to file and then increment total bytes read
@@ -267,6 +266,9 @@ func handleReadFile(words []string) {
 				totalBytesRead += bytesRead
 			}
 		}
+
+		conn.VClose()
+		listener.VClose()
 	}()
 
 }

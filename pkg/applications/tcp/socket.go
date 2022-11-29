@@ -198,10 +198,14 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 				firstItem := inFlight.Front().Value.(*TcpPacketItem)
 				relSeq := firstItem.Priority
 				payloadSize := len(firstItem.Value.data)
+				if payloadSize == 0 {
+					payloadSize = 1
+				}
 
 				if relSeq+payloadSize <= int(relLargestAckNum) {
-					if firstItem.Value.header.Flags == header.TCPFlagFin {
+					if firstItem.Value.header.Flags&header.TCPFlagFin != 0 {
 						if sock.connState == FIN_WAIT_1 {
+							fmt.Println("received ack for fin with ack number", tcpHdr.AckNum-sock.myInitSeqNum)
 							sock.connState = FIN_WAIT_2
 						} else if sock.connState == LAST_ACK {
 							sock.connState = CLOSED
@@ -254,7 +258,7 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 							sock.readBufferLock.Unlock()
 						} else if sock.connState == FIN_WAIT_2 {
 							sock.connState = TIME_WAIT
-							sock.timeWait()
+							go sock.timeWait()
 						} else {
 							fmt.Println("I genuinely hope this does not happen")
 						}
@@ -300,12 +304,14 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 		// we need to check if it is the next expected byte, if not then add it to the early arrival
 		if relSeqNum == sock.nextExpectedByte.Load() {
 			ackHdr := sock.getAckHeader()
+			ackHdr.AckNum += 1
 			payload := make([]byte, 0)
 			ackHdr.Checksum = computeTCPChecksum(ackHdr, sock.conn.localIP.NetIP(), sock.conn.foreignIP.NetIP(), payload)
 			ackPacket := TcpPacket{
 				header: *ackHdr,
 				data:   payload,
 			}
+
 			err := sendTcp(sock.conn.foreignIP, ackPacket.Marshal())
 			if err != nil {
 				log.Println("sendTcp: ", err)
@@ -316,12 +322,13 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 				sock.readBufferIsNotEmpty.Broadcast()
 				sock.readBufferLock.Unlock()
 			} else if sock.connState == FIN_WAIT_2 {
+				fmt.Println("Reached time_wait - sent ack for: ", ackPacket.header.AckNum)
 				sock.connState = TIME_WAIT
-				sock.timeWait()
+				go sock.timeWait()
 			} else if sock.connState == CLOSE_WAIT {
 				fmt.Println("Received fin when in close wait, socket can write: ", sock.canWrite)
 			} else {
-				fmt.Println("I sincerely hope this does not happen")
+				// fmt.Println("I sincerely hope this does not happen - in state:", sock.connState)
 			}
 
 		} else if relSeqNum > sock.nextExpectedByte.Load() { // early arrivals
@@ -393,7 +400,7 @@ func (sock *TcpSocket) HandleWrites() {
 				})
 
 				sock.inFlightListLock.Unlock()
-				fmt.Println("Sending fin")
+				fmt.Printf("Sending fin with sequence number: %d, acknumber: %d\n", finHdr.SeqNum-sock.myInitSeqNum, finHdr.AckNum-sock.foreignInitSeqNum)
 				if sock.connState == ESTABLISHED {
 					sock.connState = FIN_WAIT_1
 				} else if sock.connState == CLOSE_WAIT {

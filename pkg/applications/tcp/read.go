@@ -30,6 +30,7 @@ func (conn *TcpConn) VRead(buff []byte) (int, error) {
 			if sock.connState == ESTABLISHED {
 				isNotEmpty.Wait()
 			} else if sock.connState == CLOSE_WAIT {
+				isNotEmpty.Broadcast()
 				sock.readBufferLock.Unlock()
 				return 0, ErrReadShutdown
 			} else {
