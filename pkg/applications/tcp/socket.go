@@ -248,7 +248,6 @@ func (sock *TcpSocket) HandlePacket(p *TcpPacket) {
 					heap.Pop(&sock.earlyArrivalQueue)
 					sock.earlyArrivalPacketSize.Sub(uint32(len(smallest.data)))
 					if smallest.header.Flags == header.TCPFlagFin {
-						fmt.Println("Popped fin off EAQ")
 						if sock.connState == ESTABLISHED {
 							sock.connState = CLOSE_WAIT
 							sock.readBufferLock.Lock()
